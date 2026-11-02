@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Jarvis</string>
+    <string name="a11y_description">Permet à Jarvis de piloter le téléphone par la voix : retour, accueil, notifications, appuyer sur un bouton, et lire l\'écran uniquement sur ta demande.</string>
+</resources>
