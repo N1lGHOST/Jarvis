@@ -20,25 +20,23 @@ object Prefs {
             ).also { cached = it }
         }
 
-    fun getKey(c: Context): String =
-        try { sp(c).getString("api_key", "") ?: "" } catch (e: Exception) { "" }
-
-    fun setKey(c: Context, key: String) {
-        try { sp(c).edit().putString("api_key", key).apply() } catch (_: Exception) {}
+    fun migrateFromClaude(c: Context) {
+        try {
+            val preferences = sp(c)
+            if (!preferences.getBoolean("gemini_key_migrated", false)) {
+                preferences.edit()
+                    .remove("api_key")
+                    .putBoolean("gemini_key_migrated", true)
+                    .apply()
+            }
+        } catch (_: Exception) {}
     }
 
-    fun getRepo(c: Context): String =
-        try { sp(c).getString("repo", "") ?: "" } catch (e: Exception) { "" }
+    fun getGeminiKey(c: Context): String =
+        try { sp(c).getString("gemini_api_key", "") ?: "" } catch (e: Exception) { "" }
 
-    fun setRepo(c: Context, v: String) {
-        try { sp(c).edit().putString("repo", v).apply() } catch (_: Exception) {}
-    }
-
-    fun getAllowConfirm(c: Context): Boolean =
-        try { sp(c).getBoolean("allow_confirm", false) } catch (e: Exception) { false }
-
-    fun setAllowConfirm(c: Context, v: Boolean) {
-        try { sp(c).edit().putBoolean("allow_confirm", v).apply() } catch (_: Exception) {}
+    fun setGeminiKey(c: Context, key: String) {
+        try { sp(c).edit().putString("gemini_api_key", key).apply() } catch (_: Exception) {}
     }
 
     fun getFacts(c: Context): List<String> = try {
@@ -48,5 +46,21 @@ object Prefs {
 
     fun setFacts(c: Context, facts: List<String>) {
         try { sp(c).edit().putString("facts", JSONArray(facts).toString()).apply() } catch (_: Exception) {}
+    }
+
+    fun getConversation(c: Context): List<Msg> = try {
+        val arr = JSONArray(sp(c).getString("conversation", "[]"))
+        List(arr.length()) { index ->
+            val item = arr.getJSONObject(index)
+            Msg(item.getString("role"), item.getString("text"))
+        }
+    } catch (e: Exception) {
+        emptyList()
+    }
+
+    fun setConversation(c: Context, messages: List<Msg>) {
+        val arr = JSONArray()
+        messages.forEach { arr.put(org.json.JSONObject().put("role", it.role).put("text", it.text)) }
+        try { sp(c).edit().putString("conversation", arr.toString()).apply() } catch (_: Exception) {}
     }
 }

@@ -4,209 +4,503 @@ import android.Manifest
 import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Intent
-import android.net.Uri
-import android.os.Build
-import android.provider.Settings
 import android.os.Bundle
 import android.speech.RecognizerIntent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 
-object AppState { @Volatile var foreground = false }
+private val Void = Color(0xFF050A10)
+private val DeepTeal = Color(0xFF071921)
+private val Neon = Color(0xFF48F0D0)
+private val Ice = Color(0xFFB7FFF2)
+private val Muted = Color(0xFF8BA4AB)
+private val Panel = Color(0xFF101D25)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Voice.init(this)
-        setContent { MaterialTheme { Surface(Modifier.fillMaxSize()) { JarvisScreen() } } }
+        Prefs.migrateFromClaude(this)
+        Convo.restore(this)
+        window.statusBarColor = android.graphics.Color.rgb(5, 10, 16)
+        window.navigationBarColor = android.graphics.Color.rgb(5, 10, 16)
+        setContent {
+            MaterialTheme {
+                Surface(modifier = Modifier.fillMaxSize(), color = Void) {
+                    JarvisScreen()
+                }
+            }
+        }
     }
-
-    override fun onStart() { super.onStart(); AppState.foreground = true }
-    override fun onStop() { AppState.foreground = false; super.onStop() }
 }
 
 @Composable
-fun JarvisScreen() {
-    val ctx = LocalContext.current
+private fun JarvisScreen() {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var apiKey by remember { mutableStateOf(Prefs.getKey(ctx)) }
-    var showSettings by remember { mutableStateOf(apiKey.isBlank()) }
-    var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
+    var apiKey by remember { mutableStateOf(Prefs.getGeminiKey(context)) }
+    var showSettings by remember { mutableStateOf(apiKey.isBlank()) }
+    var listening by remember { mutableStateOf(false) }
+    var input by remember { mutableStateOf("") }
 
     fun send(text: String) {
-        if (Convo.loading) return
-        if (apiKey.isBlank()) { showSettings = true; return }
-        scope.launch { Voice.speak(Convo.ask(ctx, apiKey, text)) }
-    }
-
-    val micLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
-        if (r.resultCode == Activity.RESULT_OK) {
-            val said = r.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
-            if (!said.isNullOrBlank()) send(said)
-        }
-    }
-
-    fun listen() {
-        if (WakeService.running) {
-            Convo.error = "Désactive le mot d'activation pour utiliser le micro ici, ou dis « Jarvis »."
+        val trimmed = text.trim()
+        if (trimmed.isEmpty() || Convo.loading) return
+        if (apiKey.isBlank()) {
+            showSettings = true
             return
         }
-        val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "fr-FR")
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "Parle à Jarvis…")
-        }
-        try { micLauncher.launch(i) } catch (e: ActivityNotFoundException) {
-            Convo.error = "Reconnaissance vocale indisponible sur ce téléphone"
+        scope.launch {
+            val answer = Convo.ask(context, apiKey, trimmed)
+            Voice.speak(answer)
         }
     }
 
-    val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
-        if (granted[Manifest.permission.RECORD_AUDIO] == true) WakeService.start(ctx)
-        else Convo.error = "Le micro est nécessaire pour le mot d'activation"
+    val speechLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        listening = false
+        if (result.resultCode == Activity.RESULT_OK) {
+            val spoken = result.data
+                ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+                ?.firstOrNull()
+            if (!spoken.isNullOrBlank()) send(spoken)
+        }
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) startRecognition(speechLauncher) { listening = it }
+        else Convo.error = "Autorise le microphone pour parler à Jarvis."
     }
 
     LaunchedEffect(Convo.messages.size) {
-        if (Convo.messages.isNotEmpty()) listState.animateScrollToItem(Convo.messages.size - 1)
+        if (Convo.messages.isNotEmpty()) {
+            listState.animateScrollToItem(Convo.messages.takeLast(8).lastIndex)
+        }
     }
 
-    LaunchedEffect(Unit) {
-        val repo = Prefs.getRepo(ctx)
-        if (repo.isNotBlank()) Updater.check(ctx, repo)
-    }
-
-    Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding().padding(12.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("Jarvis", style = MaterialTheme.typography.headlineSmall)
-            TextButton(onClick = { showSettings = true }) { Text("Réglages") }
-        }
-        Updater.available?.let { r ->
-            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text("Mise à jour disponible : ${r.name}", Modifier.weight(1f))
-                Button(enabled = !Updater.busy, onClick = { scope.launch { Updater.downloadAndInstall(ctx) } }) { Text("Installer") }
-            }
-        }
-        if (Updater.status.isNotBlank() && !showSettings) Text(Updater.status, style = MaterialTheme.typography.bodySmall)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Mot d'activation « Jarvis »")
-                Text("Écoute en continu : consomme de la batterie.", style = MaterialTheme.typography.bodySmall)
-            }
-            Switch(checked = WakeService.running, onCheckedChange = { on ->
-                if (on) {
-                    val need = mutableListOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.READ_CONTACTS)
-                    if (Build.VERSION.SDK_INT >= 33) need.add(Manifest.permission.POST_NOTIFICATIONS)
-                    permLauncher.launch(need.toTypedArray())
-                } else {
-                    WakeService.stop(ctx)
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Brush.verticalGradient(listOf(DeepTeal, Void, Color(0xFF020509))))
+    ) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .imePadding()
+                .padding(horizontal = 22.dp)
+        ) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Image(
+                        painter = painterResource(R.drawable.jarvis_logo),
+                        contentDescription = "Logo Jarvis",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .border(1.dp, Neon.copy(alpha = 0.65f), CircleShape)
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            "JARVIS",
+                            color = Ice,
+                            fontSize = 19.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            letterSpacing = 4.sp
+                        )
+                        Text(
+                            "PERSONAL INTELLIGENCE",
+                            color = Muted,
+                            fontSize = 8.sp,
+                            letterSpacing = 1.8.sp
+                        )
+                    }
                 }
-            })
-        }
-        LazyColumn(Modifier.weight(1f).fillMaxWidth().padding(top = 8.dp), state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(Convo.messages) { Bubble(it) }
-        }
-        Convo.error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(vertical = 4.dp)) }
-        if (Convo.loading) LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 4.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = input, onValueChange = { input = it },
-                modifier = Modifier.weight(1f), singleLine = true,
-                placeholder = { Text("Écris à Jarvis…") }
+                TextButton(onClick = { showSettings = true }) {
+                    Text("RÉGLAGES", color = Neon, fontSize = 11.sp, letterSpacing = 1.sp)
+                }
+            }
+
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "TON ASSISTANT, À TON ÉCOUTE",
+                color = Muted,
+                fontSize = 10.sp,
+                letterSpacing = 2.sp,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Center
             )
-            Spacer(Modifier.width(8.dp))
-            Button(onClick = { if (input.isNotBlank()) { send(input.trim()); input = "" } }) { Text("OK") }
-            Spacer(Modifier.width(8.dp))
-            FloatingActionButton(onClick = { listen() }) { Text("🎤") }
+
+            Box(Modifier.fillMaxWidth().weight(0.94f), contentAlignment = Alignment.Center) {
+                JarvisOrb(
+                    listening = listening,
+                    speaking = Voice.speaking,
+                    thinking = Convo.loading,
+                    onClick = {
+                        if (!listening && !Convo.loading) {
+                            if (Voice.speaking) Voice.stop()
+                            if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+                                android.content.pm.PackageManager.PERMISSION_GRANTED
+                            ) {
+                                startRecognition(speechLauncher) { listening = it }
+                            } else {
+                                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            }
+                        }
+                    }
+                )
+            }
+
+            Text(
+                when {
+                    Convo.loading -> "JE RÉFLÉCHIS"
+                    Voice.speaking -> "JE TE RÉPONDS"
+                    listening -> "JE T'ÉCOUTE"
+                    else -> "TOUCHE L'ORB POUR PARLER"
+                },
+                color = if (listening || Voice.speaking || Convo.loading) Neon else Muted,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                letterSpacing = 2.2.sp,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Center
+            )
+
+            if (Convo.error != null) {
+                Text(
+                    text = Convo.error.orEmpty(),
+                    color = Color(0xFFFF9E9E),
+                    fontSize = 12.sp,
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    textAlign = TextAlign.Center
+                )
+            }
+
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(0.9f)
+                    .padding(top = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                itemsIndexed(Convo.messages.takeLast(8)) { _, message ->
+                    MessageCard(message)
+                }
+            }
+
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp, bottom = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = input,
+                    onValueChange = { input = it },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    placeholder = { Text("Parle-moi…", color = Muted) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
+                    shape = RoundedCornerShape(22.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Ice,
+                        unfocusedTextColor = Ice,
+                        focusedBorderColor = Neon.copy(alpha = 0.8f),
+                        unfocusedBorderColor = Muted.copy(alpha = 0.35f),
+                        cursorColor = Neon,
+                        focusedContainerColor = Panel.copy(alpha = 0.85f),
+                        unfocusedContainerColor = Panel.copy(alpha = 0.65f)
+                    )
+                )
+                Spacer(Modifier.width(10.dp))
+                Button(
+                    onClick = {
+                        send(input)
+                        input = ""
+                    },
+                    enabled = input.isNotBlank() && !Convo.loading,
+                    shape = CircleShape,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Neon,
+                        contentColor = Void,
+                        disabledContainerColor = Neon.copy(alpha = 0.22f),
+                        disabledContentColor = Muted
+                    ),
+                    modifier = Modifier.size(52.dp)
+                ) {
+                    Text("↑", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                }
+            }
         }
     }
 
     if (showSettings) {
-        var draft by remember { mutableStateOf(apiKey) }
-        var facts by remember { mutableStateOf(Prefs.getFacts(ctx)) }
-        var allowConfirm by remember { mutableStateOf(Prefs.getAllowConfirm(ctx)) }
-        var repo by remember { mutableStateOf(Prefs.getRepo(ctx)) }
+        var draft by remember(apiKey) { mutableStateOf(apiKey) }
         AlertDialog(
-            onDismissRequest = { if (apiKey.isNotBlank()) showSettings = false },
-            title = { Text("Réglages") },
+            onDismissRequest = { showSettings = false },
+            containerColor = Panel,
+            title = { Text("Connexion Gemini", color = Ice) },
             text = {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
-                    OutlinedTextField(
-                        value = draft, onValueChange = { draft = it }, singleLine = true,
-                        label = { Text("Clé API Anthropic") },
-                        visualTransformation = PasswordVisualTransformation(),
-                        placeholder = { Text("sk-ant-…") }
-                    )
-                    Spacer(Modifier.height(16.dp))
+                Column {
                     Text(
-                        "Service d'accessibilité : " + if (JarvisAccessibilityService.connected) "activé" else "désactivé",
-                        style = MaterialTheme.typography.titleSmall
+                        "Ta clé reste enregistrée sur cet appareil. Gemini peut appliquer des limites ou des frais selon ton compte et ton usage.",
+                        color = Muted,
+                        fontSize = 13.sp
                     )
-                    TextButton(onClick = {
-                        ctx.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${ctx.packageName}")))
-                    }) { Text("1. Autoriser les paramètres restreints") }
-                    TextButton(onClick = { ctx.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }) {
-                        Text("2. Activer Jarvis dans Accessibilité")
-                    }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text("Jarvis peut appuyer sur Envoyer / Appeler", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                        Switch(checked = allowConfirm, onCheckedChange = { allowConfirm = it; Prefs.setAllowConfirm(ctx, it) })
-                    }
-                    Spacer(Modifier.height(16.dp))
-                    Text("Mises à jour (version ${Updater.installedName(ctx)})", style = MaterialTheme.typography.titleSmall)
+                    Spacer(Modifier.height(14.dp))
                     OutlinedTextField(
-                        value = repo, onValueChange = { repo = it; Prefs.setRepo(ctx, it.trim()) },
-                        singleLine = true, label = { Text("Dépôt GitHub (pseudo/nom)") }
+                        value = draft,
+                        onValueChange = { draft = it },
+                        singleLine = true,
+                        label = { Text("Clé API Gemini") },
+                        placeholder = { Text("AIza…") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Ice,
+                            unfocusedTextColor = Ice,
+                            focusedBorderColor = Neon,
+                            unfocusedBorderColor = Muted.copy(alpha = 0.45f),
+                            focusedLabelColor = Neon,
+                            unfocusedLabelColor = Muted,
+                            cursorColor = Neon
+                        )
                     )
-                    TextButton(enabled = !Updater.busy, onClick = {
-                        scope.launch { Updater.check(ctx, repo.trim(), manual = true) }
-                    }) { Text("Vérifier les mises à jour") }
-                    if (Updater.status.isNotBlank()) Text(Updater.status, style = MaterialTheme.typography.bodySmall)
-                    Spacer(Modifier.height(16.dp))
-                    Text("Mémoire de Jarvis : ${facts.size} information(s)", style = MaterialTheme.typography.titleSmall)
-                    facts.forEach { Text("• $it", style = MaterialTheme.typography.bodySmall) }
-                    if (facts.isNotEmpty()) {
-                        TextButton(onClick = { Prefs.setFacts(ctx, emptyList()); facts = emptyList() }) {
-                            Text("Effacer la mémoire")
-                        }
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(onClick = { Convo.clear(context) }) {
+                        Text("Effacer la conversation", color = Color(0xFFFF9E9E))
                     }
+                    Text(
+                        "Mémoire locale : ${Prefs.getFacts(context).size} élément(s). Les faits ne sont enregistrés que si tu demandes explicitement à Jarvis de s’en souvenir.",
+                        color = Muted,
+                        fontSize = 12.sp
+                    )
                 }
             },
             confirmButton = {
                 TextButton(onClick = {
                     apiKey = draft.trim()
-                    Prefs.setKey(ctx, apiKey)
+                    Prefs.setGeminiKey(context, apiKey)
                     showSettings = false
-                }) { Text("Enregistrer") }
+                }) { Text("ENREGISTRER", color = Neon) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSettings = false }) {
+                    Text("FERMER", color = Muted)
+                }
             }
         )
     }
 }
 
+private fun startRecognition(
+    launcher: androidx.activity.result.ActivityResultLauncher<Intent>,
+    onListeningChanged: (Boolean) -> Unit
+) {
+    val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE, "fr-FR")
+        putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+        putExtra(RecognizerIntent.EXTRA_PROMPT, "Jarvis t'écoute…")
+    }
+    try {
+        onListeningChanged(true)
+        launcher.launch(intent)
+    } catch (e: ActivityNotFoundException) {
+        onListeningChanged(false)
+        Convo.error = "La reconnaissance vocale n'est pas disponible sur ce téléphone."
+    }
+}
+
 @Composable
-fun Bubble(m: Msg) {
-    val mine = m.role == "user"
-    Box(Modifier.fillMaxWidth(), contentAlignment = if (mine) Alignment.CenterEnd else Alignment.CenterStart) {
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = if (mine) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
-        ) { Text(m.text, Modifier.padding(12.dp)) }
+private fun JarvisOrb(
+    listening: Boolean,
+    speaking: Boolean,
+    thinking: Boolean,
+    onClick: () -> Unit
+) {
+    val transition = rememberInfiniteTransition(label = "orb")
+    val rotation by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(14_000, easing = FastOutSlowInEasing)),
+        label = "rotation"
+    )
+    val pulse by transition.animateFloat(
+        initialValue = 0.92f,
+        targetValue = if (listening || speaking || thinking) 1.08f else 1.02f,
+        animationSpec = infiniteRepeatable(tween(1_200), RepeatMode.Reverse),
+        label = "pulse"
+    )
+    val glow = if (listening || speaking || thinking) Neon else Color(0xFF19AAB1)
+
+    Box(
+        modifier = Modifier
+            .size(286.dp)
+            .shadow(30.dp, CircleShape, ambientColor = glow.copy(alpha = 0.24f), spotColor = glow.copy(alpha = 0.25f))
+            .clip(CircleShape)
+            .background(Brush.radialGradient(listOf(glow.copy(alpha = 0.12f), Void.copy(alpha = 0.3f), Color.Transparent)))
+            .border(1.dp, glow.copy(alpha = 0.22f), CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(Modifier.fillMaxSize().padding(8.dp)) {
+            val center = this.center
+            val maxRadius = size.minDimension * 0.48f
+            drawCircle(glow.copy(alpha = 0.035f), radius = maxRadius, center = center)
+            drawCircle(
+                glow.copy(alpha = 0.16f),
+                radius = maxRadius * pulse,
+                center = center,
+                style = Stroke(width = 1.dp.toPx())
+            )
+            drawCircle(
+                glow.copy(alpha = 0.25f),
+                radius = maxRadius * 0.83f,
+                center = center,
+                style = Stroke(width = 1.dp.toPx())
+            )
+            drawArc(
+                color = glow.copy(alpha = 0.78f),
+                startAngle = rotation,
+                sweepAngle = 92f,
+                useCenter = false,
+                topLeft = androidx.compose.ui.geometry.Offset(
+                    center.x - maxRadius * 0.93f,
+                    center.y - maxRadius * 0.93f
+                ),
+                size = androidx.compose.ui.geometry.Size(maxRadius * 1.86f, maxRadius * 1.86f),
+                style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
+            )
+            drawArc(
+                color = glow.copy(alpha = 0.48f),
+                startAngle = -rotation * 1.4f,
+                sweepAngle = 48f,
+                useCenter = false,
+                topLeft = androidx.compose.ui.geometry.Offset(
+                    center.x - maxRadius * 0.72f,
+                    center.y - maxRadius * 0.72f
+                ),
+                size = androidx.compose.ui.geometry.Size(maxRadius * 1.44f, maxRadius * 1.44f),
+                style = Stroke(width = 1.5.dp.toPx(), cap = StrokeCap.Round)
+            )
+        }
+        Image(
+            painter = painterResource(R.drawable.jarvis_logo),
+            contentDescription = "Emblème Jarvis",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(154.dp)
+                .clip(CircleShape)
+                .border(1.dp, Neon.copy(alpha = 0.52f), CircleShape)
+        )
+    }
+}
+
+@Composable
+private fun MessageCard(message: Msg) {
+    val user = message.role == "user"
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (user) Arrangement.End else Arrangement.Start) {
+        Column(
+            Modifier
+                .fillMaxWidth(0.88f)
+                .clip(RoundedCornerShape(18.dp))
+                .background(if (user) Color(0xFF103A40) else Panel.copy(alpha = 0.9f))
+                .border(
+                    1.dp,
+                    if (user) Neon.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.055f),
+                    RoundedCornerShape(18.dp)
+                )
+                .padding(horizontal = 15.dp, vertical = 11.dp)
+        ) {
+            Text(
+                if (user) "TOI" else "JARVIS",
+                color = if (user) Neon.copy(alpha = 0.72f) else Muted,
+                fontSize = 9.sp,
+                letterSpacing = 1.4.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(message.text, color = Ice.copy(alpha = 0.92f), fontSize = 14.sp, lineHeight = 20.sp)
+        }
     }
 }

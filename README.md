@@ -1,23 +1,24 @@
 # Jarvis
 
-Assistant vocal Android : voix -> Claude (API Anthropic) -> réponse parlée et actions sur le téléphone.
+Jarvis est un assistant vocal Android en français, avec une interface sombre animée inspirée de ton logo. Cette première version utilise la reconnaissance vocale Android, Gemini pour les réponses et la synthèse vocale du téléphone. L'historique et les faits que tu demandes explicitement de retenir sont conservés localement dans le stockage chiffré de l'application.
 
-## Télécharger et installer l'APK
+## Utiliser l'application
 
-Chaque push sur une branche lance le workflow **Build APK**. Les builds de `main` et `master` sont des Releases normales; ceux des autres branches sont des préversions. Une fois le workflow terminé, ouvre la Release créée et télécharge directement `app-debug.apk` sur le téléphone. Le fichier est un APK, pas une archive ZIP d'artefact Actions.
+1. Télécharge l'APK `app-debug.apk` depuis la dernière Release GitHub.
+2. Installe-le sur le téléphone. Android peut demander d'autoriser l'installation depuis le navigateur ou le gestionnaire de fichiers.
+3. Dans Jarvis, entre ta clé API Gemini dans Réglages.
+4. Appuie sur l'orbe pour parler, ou écris un message. L'orbe s'anime quand Jarvis écoute, réfléchit ou répond.
 
-Android peut demander d'autoriser l'installation depuis le navigateur ou le gestionnaire de fichiers. L'APK utilise la signature de débogage générée pour le build : elle permet l'installation et les essais, mais n'est pas destinée à Google Play. Une future compilation peut être signée avec une clé différente; dans ce cas, Android demandera de désinstaller l'ancienne version avant l'installation, ce qui efface ses données. Pour distribuer des mises à jour sans désinstallation, il faudra générer une nouvelle clé privée dédiée, la conserver hors du dépôt et configurer les secrets GitHub nécessaires. La clé fournie avec l'archive est considérée compromise et ne doit pas être utilisée.
+Le microphone n'est demandé qu'au moment où tu utilises la commande vocale. Cette version ne demande pas l'autorisation d'accessibilité, l'accès aux notifications, aux contacts ou aux SMS. Elle ne reste pas à l'écoute en arrière-plan : il faut ouvrir l'application et appuyer sur l'orbe.
 
-Le vérificateur de mises à jour intégré accède uniquement aux Releases publiques; il faut donc un dépôt public pour utiliser cette fonction. Le téléchargement direct d'une Release privée nécessite une session GitHub autorisée.
+Tu peux dire « Souviens-toi que … » pour enregistrer un fait localement, « Oublie … » pour supprimer un fait correspondant ou « Oublie tout » pour vider cette mémoire. L'historique et ces faits restent sur le téléphone; les messages utilisés pour répondre et les faits fournis en contexte sont envoyés à l'API Gemini.
 
-## Configuration et coûts
+## Gemini et données
 
-Dans Jarvis -> Réglages, il faut saisir sa propre clé API Anthropic. Aucune clé API n'est incluse dans l'application ou le dépôt. Les requêtes à Anthropic peuvent entraîner des frais selon le compte et l'utilisation; ni l'API ni les quotas GitHub Actions ne sont présumés gratuits.
+Aucune clé API n'est incluse dans le code ou le dépôt. Crée et gère ta propre clé Gemini et vérifie les quotas, tarifs et conditions associés à ton compte, ta région et ton usage. Le service peut avoir des limites ou entraîner des frais; aucun usage gratuit n'est garanti. Jarvis envoie la clé directement depuis l'application à l'API Google Gemini en HTTPS. La clé est stockée localement avec le stockage chiffré Android, mais une clé utilisée dans une application cliente n'est pas aussi protégée qu'une clé détenue par un serveur privé.
 
-## Mettre à jour l'application
+La reconnaissance vocale est fournie par le service de reconnaissance installé sur le téléphone; son fonctionnement et son traitement audio dépendent de ce service et des réglages Android.
 
-Les nouveaux builds créent une Release avec un APK téléchargeable. Les mises à jour intégrées à l'application peuvent nécessiter une signature stable et le dépôt GitHub configuré dans les réglages; jusqu'à ce qu'une clé de signature dédiée soit mise en place, il peut être nécessaire de désinstaller l'ancienne version avant d'installer la nouvelle.
+## Builds et signature
 
-## Service d'accessibilité
-
-Réglages -> « 1. Autoriser les paramètres restreints » puis « 2. Activer Jarvis dans Accessibilité ».
+Chaque push sur une branche lance **Build APK** et publie le fichier APK directement dans une GitHub Release (ce n'est pas une archive ZIP d'artefact). Les builds de la branche principale sont des Releases normales; les autres sont des préversions. Le workflow utilise une signature Android de débogage, destinée aux tests et pas au Play Store. Les runners GitHub recréent cette clé pour chaque build; pour installer cette nouvelle version à la place de l'ancienne, il peut donc falloir désinstaller l'ancienne application, ce qui efface ses données. Une clé de publication dédiée et persistante devra être configurée séparément pour les mises à jour directes sans désinstallation. La clé fournie dans l'archive initiale est compromise et ne doit pas être utilisée.

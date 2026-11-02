@@ -26,12 +26,12 @@ jobs:
         run: gradle assembleDebug --no-daemon -PversionCode="$VC" -PversionName="0.4.$VC"
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: jarvis-apk-${{ github.run_number }}-${{ github.run_attempt }}
+          tag_name: jarvis-apk-${{ env.VC }}-${{ github.run_attempt }}
           name: Jarvis APK build ${{ github.run_number }}
           body: |
-            APK de test compilé depuis `${{ github.ref_name }}`.
+            APK Jarvis Gemini de test compilé depuis `${{ github.ref_name }}`.
 
-            Cette version est signée avec la clé de débogage Android. Elle est installable, mais ne convient pas à une publication Play Store et une prochaine compilation peut nécessiter de désinstaller cette version avant la mise à jour.
+            Cette version de test utilise une clé de débogage GitHub temporaire. Elle est installable, mais n'est pas destinée au Play Store; désinstalle une version précédente si Android refuse l'installation à cause de sa signature.
           prerelease: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master' }}
           make_latest: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
           files: app/build/outputs/apk/debug/app-debug.apk

@@ -5,11 +5,16 @@ import android.os.Handler
 import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import java.util.Locale
 import java.util.UUID
 
 /** Synthèse vocale partagée entre l'écran et le service. */
 object Voice {
+    var speaking by mutableStateOf(false)
+        private set
     private var tts: TextToSpeech? = null
     private var ready = false
     private var failed = false
@@ -23,10 +28,11 @@ object Voice {
             if (status == TextToSpeech.SUCCESS) {
                 tts?.language = Locale.FRENCH
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                    override fun onStart(id: String?) {}
+                    override fun onStart(id: String?) { main.post { speaking = true } }
                     override fun onDone(id: String?) { finish(id) }
                     @Deprecated("Deprecated in Java")
                     override fun onError(id: String?) { finish(id) }
+                    override fun onStop(id: String?, interrupted: Boolean) { finish(id) }
                 })
                 ready = true
             } else {
@@ -39,7 +45,10 @@ object Voice {
 
     private fun finish(id: String?) {
         val cb = synchronized(callbacks) { callbacks.remove(id) }
-        if (cb != null) main.post(cb)
+        main.post {
+            speaking = false
+            cb?.invoke()
+        }
     }
 
     fun speak(text: String, onDone: (() -> Unit)? = null) {
@@ -50,5 +59,10 @@ object Voice {
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, id)
     }
 
-    fun stop() { tts?.stop() }
+    fun stop() {
+        tts?.stop()
+        speaking = false
+        pending = null
+        synchronized(callbacks) { callbacks.clear() }
+    }
 }
