@@ -289,7 +289,7 @@ private fun JarvisScreen(
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = { Voice.setMuted(!Voice.muted) }) {
+                    TextButton(onClick = { Voice.updateMuted(!Voice.muted) }) {
                         Text(
                             if (Voice.muted) "MUET" else "SON",
                             color = if (Voice.muted) Muted else Neon,
@@ -515,7 +515,7 @@ private fun JarvisScreen(
                     Text("Tonalité ${"%.1f".format(java.util.Locale.FRANCE, Voice.pitch)}", color = Muted, fontSize = 12.sp)
                     Slider(
                         value = Voice.pitch,
-                        onValueChange = { Voice.setPitch(it) },
+                        onValueChange = { Voice.updatePitch(it) },
                         valueRange = 0.7f..1.3f,
                         onValueChangeFinished = { Voice.speak("Bonjour, Monsieur.") }
                     )

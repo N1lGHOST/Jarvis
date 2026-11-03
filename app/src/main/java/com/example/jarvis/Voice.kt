@@ -90,13 +90,13 @@ object Voice {
         init(ctx)
     }
 
-    fun setPitch(value: Float) {
+    fun updatePitch(value: Float) {
         pitch = value.coerceIn(0.7f, 1.3f)
         tts?.setPitch(pitch)
         appContext?.let { Prefs.setSpeechPitch(it, pitch) }
     }
 
-    fun setMuted(value: Boolean) {
+    fun updateMuted(value: Boolean) {
         muted = value
         appContext?.let { Prefs.setSpeechMuted(it, value) }
         if (value) stop()
