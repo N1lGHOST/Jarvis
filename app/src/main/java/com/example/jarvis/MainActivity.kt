@@ -13,7 +13,11 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -134,8 +138,29 @@ private fun JarvisScreen(
     var apiKey by remember { mutableStateOf(Prefs.getOpenRouterKey(context)) }
     var showSettings by remember { mutableStateOf(false) }
     var showWakeDisclosure by remember { mutableStateOf(false) }
+    var showStock by remember { mutableStateOf(false) }
+    var showAddStock by remember { mutableStateOf(false) }
     var listening by remember { mutableStateOf(false) }
     var input by remember { mutableStateOf("") }
+    var stockItems by remember { mutableStateOf(Prefs.getStockItems(context)) }
+
+    fun updateStock(items: List<StockItem>) {
+        stockItems = items
+        Prefs.setStockItems(context, items)
+    }
+
+    fun addStockItem(name: String, quantity: Int) {
+        val existingIndex = stockItems.indexOfFirst { it.name.equals(name, ignoreCase = true) }
+        val updated = if (existingIndex >= 0) {
+            stockItems.toMutableList().also { items ->
+                val old = items[existingIndex]
+                items[existingIndex] = old.copy(quantity = old.quantity + quantity)
+            }
+        } else {
+            stockItems + StockItem(name, quantity)
+        }
+        updateStock(updated)
+    }
 
     fun send(text: String) {
         val trimmed = text.trim()
@@ -317,6 +342,27 @@ private fun JarvisScreen(
                 }
             }
 
+            if (showStock) {
+                StockScreen(
+                    modifier = Modifier.weight(1f),
+                    items = stockItems,
+                    onBack = { showStock = false },
+                    onAdd = { showAddStock = true },
+                    onIncrement = { index ->
+                        updateStock(stockItems.toMutableList().also { items ->
+                            items[index] = items[index].copy(quantity = items[index].quantity + 1)
+                        })
+                    },
+                    onDecrement = { index ->
+                        updateStock(stockItems.toMutableList().also { items ->
+                            items[index] = items[index].copy(quantity = (items[index].quantity - 1).coerceAtLeast(0))
+                        })
+                    },
+                    onRemove = { index ->
+                        updateStock(stockItems.filterIndexed { itemIndex, _ -> itemIndex != index })
+                    }
+                )
+            } else {
             Spacer(Modifier.height(6.dp))
             Text(
                 "TON ASSISTANT, TOUJOURS DISPONIBLE",
@@ -387,6 +433,17 @@ private fun JarvisScreen(
                 modifier = Modifier.fillMaxWidth(),
                 textAlign = TextAlign.Center
             )
+
+            Row(
+                Modifier.fillMaxWidth().padding(top = 12.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                NodeShortcut("VOIX", "◉", selected = listening, onClick = { requestVoiceInput() })
+                NodeShortcut("STOCK", "▦", selected = false, onClick = { showStock = true })
+                NodeShortcut("BATTERIE", "▤", selected = false, onClick = { send("niveau batterie") })
+                NodeShortcut("WEB", "⌕", selected = false, onClick = { input = "cherche sur internet " })
+            }
 
             Row(
                 Modifier.fillMaxWidth().padding(top = 8.dp),
@@ -487,6 +544,7 @@ private fun JarvisScreen(
                 ) {
                     Text("↑", fontSize = 22.sp, fontWeight = FontWeight.Bold)
                 }
+            }
             }
         }
     }
@@ -676,6 +734,16 @@ private fun JarvisScreen(
             }
         )
     }
+
+    if (showAddStock) {
+        AddStockDialog(
+            onDismiss = { showAddStock = false },
+            onAdd = { name, quantity ->
+                addStockItem(name, quantity)
+                showAddStock = false
+            }
+        )
+    }
 }
 
 private fun startRecognition(
@@ -785,6 +853,173 @@ private fun JarvisOrb(
                 .border(1.dp, Neon.copy(alpha = 0.52f), CircleShape)
         )
     }
+}
+
+@Composable
+private fun NodeShortcut(
+    title: String,
+    symbol: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val pulse by rememberInfiniteTransition(label = "nodePulse").animateFloat(
+        initialValue = 0.72f,
+        targetValue = 0.98f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1_500, delayMillis = title.length * 110),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "nodePulseAlpha"
+    )
+    val emphasis by animateFloatAsState(
+        targetValue = if (selected) 1f else pulse,
+        animationSpec = tween(300),
+        label = "nodeEmphasis"
+    )
+    Column(
+        modifier = modifier.clickable(onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .background(Neon.copy(alpha = 0.08f * emphasis))
+                .border(1.dp, Neon.copy(alpha = 0.42f * emphasis), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(symbol, color = Neon.copy(alpha = emphasis), fontSize = 21.sp)
+        }
+        Spacer(Modifier.height(5.dp))
+        Text(title, color = Muted.copy(alpha = emphasis), fontSize = 8.sp, letterSpacing = 0.6.sp)
+    }
+}
+
+@Composable
+private fun StockScreen(
+    modifier: Modifier = Modifier,
+    items: List<StockItem>,
+    onBack: () -> Unit,
+    onAdd: () -> Unit,
+    onIncrement: (Int) -> Unit,
+    onDecrement: (Int) -> Unit,
+    onRemove: (Int) -> Unit
+) {
+    Column(modifier.fillMaxWidth().padding(top = 12.dp)) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            TextButton(onClick = onBack) { Text("‹ ACCUEIL", color = Neon) }
+            Text("STOCK", color = Ice, fontSize = 17.sp, letterSpacing = 2.sp, fontWeight = FontWeight.SemiBold)
+            TextButton(onClick = onAdd) { Text("+ AJOUTER", color = Neon, fontSize = 10.sp) }
+        }
+        Text(
+            "${items.size} article(s) · quantités enregistrées sur cet appareil",
+            color = Muted,
+            fontSize = 11.sp,
+            modifier = Modifier.padding(start = 4.dp, bottom = 10.dp)
+        )
+        if (items.isEmpty()) {
+            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Text("Ton stock est vide.\nTouche + AJOUTER pour commencer.", color = Muted, textAlign = TextAlign.Center)
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(9.dp)
+            ) {
+                itemsIndexed(items) { index, item ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Panel.copy(alpha = 0.94f))
+                            .border(1.dp, Neon.copy(alpha = 0.13f), RoundedCornerShape(16.dp))
+                            .padding(horizontal = 12.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(item.name, color = Ice, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                            Text(if (item.quantity == 0) "ÉPUISÉ" else "Quantité : ${item.quantity}", color = Muted, fontSize = 11.sp)
+                        }
+                        TextButton(onClick = { onDecrement(index) }, enabled = item.quantity > 0) {
+                            Text("−", color = if (item.quantity > 0) Neon else Muted, fontSize = 20.sp)
+                        }
+                        Text(item.quantity.toString(), color = Ice, fontSize = 15.sp)
+                        TextButton(onClick = { onIncrement(index) }) {
+                            Text("+", color = Neon, fontSize = 20.sp)
+                        }
+                        TextButton(onClick = { onRemove(index) }) {
+                            Text("×", color = Color(0xFFFF9E9E), fontSize = 18.sp)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AddStockDialog(
+    onDismiss: () -> Unit,
+    onAdd: (String, Int) -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+    var quantity by remember { mutableStateOf("1") }
+    val parsedQuantity = quantity.toIntOrNull()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Panel,
+        title = { Text("Ajouter au stock", color = Ice) },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    singleLine = true,
+                    label = { Text("Nom de l’article") },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Ice,
+                        unfocusedTextColor = Ice,
+                        focusedBorderColor = Neon,
+                        unfocusedBorderColor = Muted.copy(alpha = 0.45f),
+                        focusedLabelColor = Neon,
+                        unfocusedLabelColor = Muted,
+                        cursorColor = Neon
+                    )
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = quantity,
+                    onValueChange = { value -> if (value.all(Char::isDigit)) quantity = value },
+                    singleLine = true,
+                    label = { Text("Quantité") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Ice,
+                        unfocusedTextColor = Ice,
+                        focusedBorderColor = Neon,
+                        unfocusedBorderColor = Muted.copy(alpha = 0.45f),
+                        focusedLabelColor = Neon,
+                        unfocusedLabelColor = Muted,
+                        cursorColor = Neon
+                    )
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onAdd(name.trim(), parsedQuantity ?: 0) },
+                enabled = name.isNotBlank() && parsedQuantity != null && parsedQuantity > 0
+            ) { Text("AJOUTER", color = Neon) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("ANNULER", color = Muted) }
+        }
+    )
 }
 
 @Composable

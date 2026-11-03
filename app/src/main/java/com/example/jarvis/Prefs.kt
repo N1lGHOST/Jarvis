@@ -5,6 +5,8 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import org.json.JSONArray
 
+data class StockItem(val name: String, val quantity: Int)
+
 /** Clé API et mémoire de Jarvis, chiffrées sur le téléphone. */
 object Prefs {
     @Volatile private var cached: android.content.SharedPreferences? = null
@@ -105,5 +107,23 @@ object Prefs {
         val arr = JSONArray()
         messages.forEach { arr.put(org.json.JSONObject().put("role", it.role).put("text", it.text)) }
         try { sp(c).edit().putString("conversation", arr.toString()).apply() } catch (_: Exception) {}
+    }
+
+    fun getStockItems(c: Context): List<StockItem> = try {
+        val arr = JSONArray(sp(c).getString("stock_items", "[]"))
+        List(arr.length()) { index ->
+            val item = arr.getJSONObject(index)
+            StockItem(item.getString("name"), item.getInt("quantity").coerceAtLeast(0))
+        }
+    } catch (e: Exception) {
+        emptyList()
+    }
+
+    fun setStockItems(c: Context, items: List<StockItem>) {
+        val arr = JSONArray()
+        items.forEach { item ->
+            arr.put(org.json.JSONObject().put("name", item.name).put("quantity", item.quantity))
+        }
+        try { sp(c).edit().putString("stock_items", arr.toString()).apply() } catch (_: Exception) {}
     }
 }

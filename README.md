@@ -7,7 +7,9 @@ Jarvis est un assistant vocal Android en français, avec une interface sombre an
 1. Télécharge l'APK `app-debug.apk` depuis la dernière Release GitHub.
 2. Installe-le sur le téléphone. Android peut demander d'autoriser l'installation depuis le navigateur ou le gestionnaire de fichiers.
 3. Crée une clé API OpenRouter et entre-la dans Réglages.
-4. Appuie sur l'orbe pour parler, ou écris un message. L'orbe s'anime quand Jarvis écoute, réfléchit ou répond.
+4. Appuie sur l'orbe ou le nœud « VOIX » pour parler, ou écris un message. Les nœuds « STOCK », « BATTERIE » et « WEB » ouvrent l'inventaire local, donnent le niveau de batterie et préparent une recherche Web.
+
+Le stock est enregistré localement dans le stockage chiffré de l'application. Tu peux ajouter un article, modifier sa quantité avec +/− ou le supprimer. Ajouter un article déjà présent additionne sa quantité; une quantité à zéro reste visible comme « épuisé ». Aucune donnée de stock n'est envoyée à OpenRouter.
 
 Le mode « écoute Jarvis » est optionnel. Lorsqu'il est activé, le micro reste actif en arrière-plan pour pouvoir détecter « Jarvis »; l'indicateur micro Android est normal et nécessaire au mot de réveil. Android privilégie la reconnaissance hors ligne si le téléphone la prend en charge; sinon son service vocal peut traiter les extraits entendus, y compris avant le mot de réveil. La veille utilise une notification persistante. Le service de reconnaissance Android peut se réinitialiser entre les écoutes; l'indicateur système peut donc changer d'état et Jarvis ne garantit pas une capture audio continue. Android peut suspendre ou arrêter le service selon le téléphone et ses restrictions d'arrière-plan. Le service ne redémarre pas après un redémarrage du téléphone tant que tu ne relances pas Jarvis. Désactive l'écoute avec le bouton dans l'application ou la notification.
 
