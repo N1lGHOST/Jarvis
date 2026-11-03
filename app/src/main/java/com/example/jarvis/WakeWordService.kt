@@ -138,6 +138,14 @@ class WakeWordService : Service() {
     private fun startRecognition() {
         if (isSpeaking) return
         if (recognizer == null) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                finalStatus = "Veille indisponible : reconnaissance française hors ligne requise"
+                WakeWordState.status = finalStatus.orEmpty()
+                Prefs.setWakeWordEnabled(this, false)
+                stoppingByUser = true
+                stopSelf()
+                return
+            }
             if (!SpeechRecognizer.isRecognitionAvailable(this)) {
                 finalStatus = "Reconnaissance vocale indisponible sur ce téléphone"
                 WakeWordState.status = finalStatus.orEmpty()
@@ -358,16 +366,14 @@ class WakeWordService : Service() {
     }
 
     private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Écoute Jarvis",
-                NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "Indique que Jarvis attend son mot d'activation avec la reconnaissance hors ligne."
-            }
-            notificationManager().createNotificationChannel(channel)
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            "Écoute Jarvis",
+            NotificationManager.IMPORTANCE_LOW
+        ).apply {
+            description = "Indique que Jarvis attend son mot d'activation avec la reconnaissance hors ligne."
         }
+        notificationManager().createNotificationChannel(channel)
     }
 
     private fun notificationManager() =

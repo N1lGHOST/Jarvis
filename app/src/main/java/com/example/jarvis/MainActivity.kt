@@ -1,13 +1,16 @@
 package com.example.jarvis
 
 import android.Manifest
-import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -56,11 +59,13 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -139,6 +144,8 @@ private fun JarvisScreen(
     var showSettings by remember { mutableStateOf(false) }
     var showWakeDisclosure by remember { mutableStateOf(false) }
     var listening by remember { mutableStateOf(false) }
+    var voiceConversationActive by remember { mutableStateOf(false) }
+    var partialTranscript by remember { mutableStateOf("") }
     var input by remember { mutableStateOf("") }
     var showInventory by remember { mutableStateOf(false) }
     var inventory by remember { mutableStateOf(Prefs.getInventory(context)) }
@@ -147,12 +154,151 @@ private fun JarvisScreen(
     var showWebSearch by remember { mutableStateOf(false) }
     var webSearchInput by remember { mutableStateOf("") }
 
-    fun send(text: String) {
+    val speechRecognizer = remember(context) {
+        when {
+            !SpeechRecognizer.isRecognitionAvailable(context) -> null
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                SpeechRecognizer.isOnDeviceRecognitionAvailable(context) ->
+                SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
+            else -> SpeechRecognizer.createSpeechRecognizer(context)
+        }
+    }
+    val speechRestartHandler = remember { Handler(Looper.getMainLooper()) }
+    val currentVoiceSession = rememberUpdatedState(voiceConversationActive)
+
+    fun startVoiceRecognition() {
+        if (!currentVoiceSession.value) return
+        val recognizer = speechRecognizer
+        if (recognizer == null) {
+            voiceConversationActive = false
+            listening = false
+            Convo.error = "La reconnaissance vocale n'est pas disponible sur ce téléphone."
+            return
+        }
+        if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            voiceConversationActive = false
+            listening = false
+            Convo.error = "Autorise le microphone pour parler à Jarvis."
+            return
+        }
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "fr-FR")
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+        }
+        try {
+            partialTranscript = ""
+            listening = true
+            Convo.error = null
+            recognizer.startListening(intent)
+        } catch (_: SecurityException) {
+            listening = false
+            voiceConversationActive = false
+            Convo.error = "Android a refusé l'accès au microphone. Vérifie l'autorisation de Jarvis."
+        } catch (_: IllegalStateException) {
+            listening = false
+            if (currentVoiceSession.value) {
+                speechRestartHandler.postDelayed({ startVoiceRecognition() }, 800)
+            } else {
+                Convo.error = "Le service vocal est occupé. Réessaie dans un instant."
+            }
+        }
+    }
+
+    fun send(text: String, resumeVoiceAfterAnswer: Boolean = false) {
         val trimmed = text.trim()
         if (trimmed.isEmpty() || Convo.loading) return
         scope.launch {
             val answer = Convo.ask(context, apiKey, trimmed, aiProvider = aiProvider)
-            Voice.speak(answer)
+            Voice.speak(answer) {
+                if (resumeVoiceAfterAnswer && currentVoiceSession.value) {
+                    speechRestartHandler.postDelayed({ startVoiceRecognition() }, 350)
+                }
+            }
+        }
+    }
+    val latestRecognizedSpeech = rememberUpdatedState<(String) -> Unit> {
+        send(it, resumeVoiceAfterAnswer = true)
+    }
+
+    DisposableEffect(speechRecognizer) {
+        val recognizer = speechRecognizer
+        if (recognizer != null) {
+            recognizer.setRecognitionListener(object : RecognitionListener {
+                override fun onReadyForSpeech(params: Bundle?) {
+                    listening = true
+                }
+
+                override fun onBeginningOfSpeech() {
+                    listening = true
+                    partialTranscript = ""
+                }
+
+                override fun onRmsChanged(rmsdB: Float) = Unit
+                override fun onBufferReceived(buffer: ByteArray?) = Unit
+                override fun onEndOfSpeech() {
+                    listening = false
+                    partialTranscript = ""
+                }
+
+                override fun onError(error: Int) {
+                    listening = false
+                    partialTranscript = ""
+                    if (!currentVoiceSession.value) return
+                    if (error == SpeechRecognizer.ERROR_NO_MATCH ||
+                        error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
+                        error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY
+                    ) {
+                        speechRestartHandler.postDelayed({ startVoiceRecognition() }, 500)
+                    } else {
+                        voiceConversationActive = false
+                        Convo.error = when (error) {
+                            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS ->
+                                "Autorise le microphone pour continuer la conversation vocale."
+                            SpeechRecognizer.ERROR_NETWORK,
+                            SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
+                                "Le service de reconnaissance vocale a besoin d'une connexion."
+                            SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED ->
+                                "La reconnaissance en français n'est pas disponible sur ce téléphone."
+                            else -> "La reconnaissance vocale a rencontré une erreur ($error)."
+                        }
+                    }
+                }
+
+                override fun onResults(results: Bundle?) {
+                    listening = false
+                    partialTranscript = ""
+                    val spoken = results
+                        ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        ?.firstOrNull()
+                        ?.trim()
+                    if (!spoken.isNullOrBlank()) {
+                        latestRecognizedSpeech.value(spoken)
+                    } else if (currentVoiceSession.value) {
+                        speechRestartHandler.postDelayed({ startVoiceRecognition() }, 350)
+                    }
+                }
+
+                override fun onPartialResults(results: Bundle?) {
+                    partialTranscript = results
+                        ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        ?.firstOrNull()
+                        .orEmpty()
+                }
+
+                override fun onEvent(eventType: Int, params: Bundle?) = Unit
+            })
+        }
+        onDispose {
+            voiceConversationActive = false
+            listening = false
+            speechRestartHandler.removeCallbacksAndMessages(null)
+            recognizer?.cancel()
+            recognizer?.destroy()
         }
     }
 
@@ -201,22 +347,16 @@ private fun JarvisScreen(
         requestWakeWordPermissions()
     }
 
-    val speechLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        listening = false
-        if (result.resultCode == Activity.RESULT_OK) {
-            val spoken = result.data
-                ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-                ?.firstOrNull()
-            if (!spoken.isNullOrBlank()) send(spoken)
-        }
-    }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (granted) startRecognition(speechLauncher) { listening = it }
-        else Convo.error = "Autorise le microphone pour parler à Jarvis."
+        if (granted) {
+            voiceConversationActive = true
+            startVoiceRecognition()
+        } else {
+            voiceConversationActive = false
+            Convo.error = "Autorise le microphone pour parler à Jarvis."
+        }
     }
     val ttsSettingsLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -462,14 +602,24 @@ private fun JarvisScreen(
                             diameter = 138.dp,
                             modifier = Modifier.align(Alignment.Center),
                             onClick = {
-                                if (!listening && !Convo.loading) {
-                                    if (Voice.speaking) Voice.stop()
-                                    if (WakeWordState.active) {
+                                if (WakeWordState.active) {
+                                    if (!listening && !Convo.loading) {
                                         WakeWordService.requestCommand(context)
-                                    } else if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+                                    }
+                                } else if (voiceConversationActive) {
+                                    voiceConversationActive = false
+                                    listening = false
+                                    partialTranscript = ""
+                                    speechRestartHandler.removeCallbacksAndMessages(null)
+                                    speechRecognizer?.cancel()
+                                    Voice.stop()
+                                } else if (!Convo.loading) {
+                                    if (Voice.speaking) Voice.stop()
+                                    if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
                                         android.content.pm.PackageManager.PERMISSION_GRANTED
                                     ) {
-                                        startRecognition(speechLauncher) { listening = it }
+                                        voiceConversationActive = true
+                                        startVoiceRecognition()
                                     } else {
                                         permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                                     }
@@ -482,6 +632,7 @@ private fun JarvisScreen(
                             Convo.loading -> "JARVIS RÉFLÉCHIT"
                             Voice.speaking -> "JARVIS RÉPOND"
                             listening || (WakeWordState.active && WakeWordState.listening) -> "JARVIS ÉCOUTE"
+                            voiceConversationActive -> "TOUCHE L'ORB POUR TERMINER"
                             WakeWordState.active -> "DIS « JARVIS » OU TOUCHE L'ORB"
                             else -> "TOUCHE L'ORB POUR PARLER"
                         },
@@ -492,6 +643,15 @@ private fun JarvisScreen(
                         modifier = Modifier.fillMaxWidth(),
                         textAlign = TextAlign.Center
                     )
+                    if (partialTranscript.isNotBlank()) {
+                        Text(
+                            partialTranscript,
+                            color = Ice,
+                            fontSize = 12.sp,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth().padding(top = 5.dp)
+                        )
+                    }
                 }
 
                 Row(
@@ -950,25 +1110,6 @@ private fun JarvisScreen(
                 }
             }
         )
-    }
-}
-
-private fun startRecognition(
-    launcher: androidx.activity.result.ActivityResultLauncher<Intent>,
-    onListeningChanged: (Boolean) -> Unit
-) {
-    val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE, "fr-FR")
-        putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-        putExtra(RecognizerIntent.EXTRA_PROMPT, "Jarvis t'écoute…")
-    }
-    try {
-        onListeningChanged(true)
-        launcher.launch(intent)
-    } catch (e: ActivityNotFoundException) {
-        onListeningChanged(false)
-        Convo.error = "La reconnaissance vocale n'est pas disponible sur ce téléphone."
     }
 }
 
