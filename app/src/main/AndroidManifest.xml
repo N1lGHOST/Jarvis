@@ -20,9 +20,9 @@
 
     <application
         android:allowBackup="false"
-        android:icon="@drawable/jarvis_logo"
+        android:icon="@drawable/jarvis_app_icon"
         android:label="@string/app_name"
-        android:roundIcon="@drawable/jarvis_logo"
+        android:roundIcon="@drawable/jarvis_app_icon"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity
             android:name=".MainActivity"

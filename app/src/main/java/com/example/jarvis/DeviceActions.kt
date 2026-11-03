@@ -4,7 +4,10 @@ import android.app.AlarmManager
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.media.AudioManager
+import android.net.Uri
+import android.os.BatteryManager
 import android.provider.AlarmClock
 import android.provider.Settings
 import java.text.Normalizer
@@ -28,7 +31,13 @@ object DeviceActions {
         val command = normalize(text).trim().trimEnd('.', '!', '?')
         val audio = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
+        webSearchQuery(command)?.let { query ->
+            return openWebSearch(ctx, allowActivityLaunch, text, query)
+        }
+
         when {
+            isBatteryQuery(command) ->
+                return batteryStatus(ctx)
             command.contains("quelle heure") ->
                 return DeviceActionResult(
                     "Il est " + LocalTime.now().format(DateTimeFormatter.ofPattern("H 'heures' mm", Locale.FRENCH)) + "."
@@ -89,6 +98,9 @@ object DeviceActions {
         )
             .find(command)?.groupValues?.get(1)?.trim()
         if (appName != null) {
+            websiteIntent(appName)?.let { intent ->
+                return launch(ctx, allowActivityLaunch, text, intent, "J'ouvre le site dans ton navigateur.")
+            }
             val knownAssistant = appName in setOf("assistant google", "google assistant")
             if (knownAssistant) {
                 val assistantIntent = Intent(Intent.ACTION_VOICE_COMMAND)
@@ -97,10 +109,108 @@ object DeviceActions {
                 }
             }
             val appIntent = findAppIntent(ctx, appName)
+                ?: websiteForApp(appName)?.let { website ->
+                    return launch(
+                        ctx,
+                        allowActivityLaunch,
+                        text,
+                        Intent(Intent.ACTION_VIEW, Uri.parse(website)),
+                        "L'application n'est pas installée. J'ouvre son site dans le navigateur."
+                    )
+                }
                 ?: return DeviceActionResult("Je ne trouve pas l'application « $appName » sur ce téléphone.")
             return launch(ctx, allowActivityLaunch, text, appIntent, "J'ouvre $appName.")
         }
         return null
+    }
+
+    private fun isBatteryQuery(command: String): Boolean =
+        command.matches(
+            Regex("^(?:quel est le niveau de (?:ma |la )?batterie|quel est l etat de (?:ma |la )?batterie|quelle est la charge de (?:ma |la )?batterie|quel est le pourcentage de (?:ma |la )?batterie|combien de batterie (?:il me )?reste|niveau de batterie|etat de (?:ma |la )?batterie)$")
+        )
+
+    private fun batteryStatus(ctx: Context): DeviceActionResult {
+        val intent = ctx.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            ?: return DeviceActionResult("Je ne peux pas lire l'état de la batterie pour le moment.")
+        val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+        val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+        if (level < 0 || scale <= 0) {
+            return DeviceActionResult("Je ne peux pas lire l'état de la batterie pour le moment.")
+        }
+        val percent = (level * 100f / scale).toInt()
+        val status = when (intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)) {
+            BatteryManager.BATTERY_STATUS_CHARGING -> " et elle est en charge"
+            BatteryManager.BATTERY_STATUS_FULL -> " et elle est complètement chargée"
+            else -> ""
+        }
+        return DeviceActionResult("La batterie est à $percent pour cent$status.")
+    }
+
+    private fun webSearchQuery(command: String): String? =
+        Regex("^(?:cherche|recherche|fais une recherche) (?:sur le web|sur internet|sur le net) (.+)$")
+            .matchEntire(command)
+            ?.groupValues
+            ?.get(1)
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+
+    private fun openWebSearch(
+        ctx: Context,
+        allowActivityLaunch: Boolean,
+        command: String,
+        query: String
+    ): DeviceActionResult {
+        if (!allowActivityLaunch) {
+            pendingCommand = command
+            return DeviceActionResult(
+                "Android bloque l'ouverture du navigateur depuis l'arrière-plan. Touche la notification Jarvis pour continuer.",
+                needsForeground = true
+            )
+        }
+        val searchIntent = Intent(Intent.ACTION_WEB_SEARCH).putExtra(android.app.SearchManager.QUERY, query)
+        return try {
+            searchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            ctx.startActivity(searchIntent)
+            DeviceActionResult("Je lance une recherche Web sur « $query ».")
+        } catch (_: ActivityNotFoundException) {
+            launch(
+                ctx,
+                true,
+                command,
+                Intent(
+                    Intent.ACTION_VIEW,
+                    Uri.parse("https://www.google.com/search?q=${Uri.encode(query)}")
+                ),
+                "J'ouvre les résultats Web pour « $query »."
+            )
+        } catch (_: SecurityException) {
+            DeviceActionResult("Android n'autorise pas l'ouverture d'une recherche Web sur ce téléphone.")
+        }
+    }
+
+    private fun websiteIntent(requested: String): Intent? {
+        val candidate = requested.removePrefix("site ").trim()
+        if (!candidate.contains('.')) return null
+        val uri = Uri.parse(
+            if (candidate.startsWith("http://") || candidate.startsWith("https://")) candidate
+            else "https://$candidate"
+        )
+        if (uri.scheme !in setOf("http", "https") || uri.host.isNullOrBlank()) return null
+        return Intent(Intent.ACTION_VIEW, uri)
+    }
+
+    private fun websiteForApp(name: String): String? = when (name) {
+        "youtube" -> "https://www.youtube.com"
+        "facebook" -> "https://www.facebook.com"
+        "instagram" -> "https://www.instagram.com"
+        "tiktok" -> "https://www.tiktok.com"
+        "spotify" -> "https://open.spotify.com"
+        "whatsapp" -> "https://web.whatsapp.com"
+        "google maps", "maps" -> "https://maps.google.com"
+        "gmail" -> "https://mail.google.com"
+        "netflix" -> "https://www.netflix.com"
+        "x", "twitter" -> "https://x.com"
+        else -> null
     }
 
     private fun launch(
