@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.speech.RecognizerIntent
@@ -11,11 +12,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -49,6 +47,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -209,7 +209,7 @@ private fun JarvisScreen(
     val ttsSettingsLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
-        Voice.reload(context)
+        Voice.useSystemVoice(context)
     }
 
     LaunchedEffect(Unit) {
@@ -514,16 +514,95 @@ private fun JarvisScreen(
                         Text("CHOISIR LA VOIX DU TÉLÉPHONE", color = Neon)
                     }
                     Text(
-                        "Dans les réglages Android, choisis une voix française masculine si elle est proposée par ton moteur vocal. Jarvis garde ce choix du téléphone; le réglage de tonalité ci-dessous la rend plus grave, sans garantir le genre ou l'accent.",
+                        "Après avoir choisi le moteur et la langue dans Android, sélectionne une voix française disponible dans la liste ci-dessous. Le profil de tonalité ne garantit pas un timbre ou un accent précis.",
                         color = Muted,
                         fontSize = 12.sp
                     )
-                    Text("Tonalité ${"%.1f".format(java.util.Locale.FRANCE, Voice.pitch)}", color = Muted, fontSize = 12.sp)
+                    Spacer(Modifier.height(14.dp))
+                    Text("PROFIL DE TONALITÉ", color = Ice, fontSize = 12.sp, letterSpacing = 1.sp)
+                    Text(
+                        "Ces profils modifient la hauteur de la voix, pas son timbre. Le résultat dépend du moteur vocal du téléphone.",
+                        color = Muted,
+                        fontSize = 12.sp
+                    )
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf("man" to "HOMME", "woman" to "FEMME").forEach { (profile, label) ->
+                            val selected = Voice.speechProfile == profile
+                            Button(
+                                onClick = {
+                                    Voice.updateProfile(profile)
+                                    Voice.speak("Bonjour, Monsieur.")
+                                },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(14.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (selected) Neon.copy(alpha = 0.18f) else Void,
+                                    contentColor = if (selected) Neon else Muted
+                                )
+                            ) {
+                                Text(label, fontSize = 11.sp, letterSpacing = 1.sp)
+                            }
+                        }
+                    }
+                    var showVoiceMenu by remember { mutableStateOf(false) }
+                    val selectedVoiceLabel = Voice.availableVoices
+                        .firstOrNull { it.name == Voice.selectedVoiceName }?.label
+                    Box {
+                        TextButton(
+                            onClick = { showVoiceMenu = true },
+                            enabled = Voice.availableVoices.isNotEmpty()
+                        ) {
+                            Text(
+                                selectedVoiceLabel?.let { "VOIX : $it" }
+                                    ?: "Aucune voix française listée",
+                                color = if (Voice.availableVoices.isNotEmpty()) Neon else Muted
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = showVoiceMenu,
+                            onDismissRequest = { showVoiceMenu = false }
+                        ) {
+                            Voice.availableVoices.forEach { option ->
+                                DropdownMenuItem(
+                                    text = { Text(option.label) },
+                                    onClick = {
+                                        Voice.selectVoice(option.name)
+                                        showVoiceMenu = false
+                                        Voice.speak("Bonjour, Monsieur.")
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text("TONALITÉ ${"%.1f".format(java.util.Locale.FRANCE, Voice.pitch)}", color = Muted, fontSize = 12.sp)
                     Slider(
                         value = Voice.pitch,
                         onValueChange = { Voice.updatePitch(it) },
                         valueRange = 0.7f..1.3f,
                         onValueChangeFinished = { Voice.speak("Bonjour, Monsieur.") }
+                    )
+                    TextButton(onClick = {
+                        try {
+                            context.startActivity(
+                                Intent(
+                                    android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                    Uri.fromParts("package", context.packageName, null)
+                                )
+                            )
+                        } catch (_: ActivityNotFoundException) {
+                            Convo.error = "Les réglages d'autorisation Android ne sont pas disponibles."
+                        }
+                    }) {
+                        Text("AUTORISATIONS DE L'APPLICATION", color = Neon)
+                    }
+                    Text(
+                        "Gère ici les autorisations Android, notamment le microphone et les notifications. Aucun service d'accessibilité n'est utilisé.",
+                        color = Muted,
+                        fontSize = 12.sp
                     )
                     Spacer(Modifier.height(8.dp))
                     TextButton(onClick = { Convo.clear(context) }) {
@@ -606,20 +685,24 @@ private fun JarvisOrb(
     diameter: Dp,
     onClick: () -> Unit
 ) {
-    val transition = rememberInfiniteTransition(label = "orb")
-    val rotation by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(tween(14_000, easing = FastOutSlowInEasing)),
-        label = "rotation"
+    val active = listening || speaking || thinking
+    val rotation = remember { Animatable(0f) }
+    val pulse by animateFloatAsState(
+        targetValue = if (active) 1.06f else 1f,
+        animationSpec = tween(350),
+        label = "orbPulse"
     )
-    val pulse by transition.animateFloat(
-        initialValue = 0.92f,
-        targetValue = if (listening || speaking || thinking) 1.08f else 1.02f,
-        animationSpec = infiniteRepeatable(tween(1_200), RepeatMode.Reverse),
-        label = "pulse"
-    )
-    val glow = if (listening || speaking || thinking) Neon else Color(0xFF19AAB1)
+    LaunchedEffect(active) {
+        if (active) {
+            while (true) {
+                rotation.animateTo(360f, tween(5_000))
+                rotation.snapTo(0f)
+            }
+        } else {
+            rotation.snapTo(0f)
+        }
+    }
+    val glow = if (active) Neon else Color(0xFF19AAB1)
 
     Box(
         modifier = Modifier
@@ -649,7 +732,7 @@ private fun JarvisOrb(
             )
             drawArc(
                 color = glow.copy(alpha = 0.78f),
-                startAngle = rotation,
+                startAngle = rotation.value,
                 sweepAngle = 92f,
                 useCenter = false,
                 topLeft = androidx.compose.ui.geometry.Offset(
@@ -661,7 +744,7 @@ private fun JarvisOrb(
             )
             drawArc(
                 color = glow.copy(alpha = 0.48f),
-                startAngle = -rotation * 1.4f,
+                startAngle = -rotation.value * 1.4f,
                 sweepAngle = 48f,
                 useCenter = false,
                 topLeft = androidx.compose.ui.geometry.Offset(

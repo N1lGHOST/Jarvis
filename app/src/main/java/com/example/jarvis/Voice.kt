@@ -11,6 +11,8 @@ import androidx.compose.runtime.setValue
 import java.util.Locale
 import java.util.UUID
 
+data class TtsVoiceOption(val name: String, val label: String)
+
 /** Synthèse vocale partagée entre l'écran et le service. */
 object Voice {
     var speaking by mutableStateOf(false)
@@ -18,6 +20,12 @@ object Voice {
     var muted by mutableStateOf(false)
         private set
     var pitch by mutableStateOf(0.8f)
+        private set
+    var speechProfile by mutableStateOf("man")
+        private set
+    var availableVoices by mutableStateOf<List<TtsVoiceOption>>(emptyList())
+        private set
+    var selectedVoiceName by mutableStateOf("")
         private set
     private var tts: TextToSpeech? = null
     private var appContext: Context? = null
@@ -32,11 +40,27 @@ object Voice {
         appContext = ctx.applicationContext
         muted = Prefs.isSpeechMuted(ctx)
         pitch = Prefs.getSpeechPitch(ctx)
+        speechProfile = Prefs.getSpeechProfile(ctx)
         tts = TextToSpeech(ctx.applicationContext) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 main.post {
                     val engine = tts ?: return@post
                     engine.language = Locale.FRENCH
+                    val frenchVoices = engine.voices.orEmpty()
+                        .filter { it.locale.language == "fr" }
+                        .sortedBy { it.name }
+                    availableVoices = frenchVoices.map { voice ->
+                        TtsVoiceOption(voice.name, "${voice.locale.getDisplayName(Locale.FRENCH)} · ${voice.name}")
+                    }
+                    val savedVoice = Prefs.getTtsVoiceName(ctx)
+                    val chosenVoice = frenchVoices.firstOrNull { it.name == savedVoice }
+                        ?: engine.defaultVoice?.takeIf { it.locale.language == "fr" }
+                        ?: frenchVoices.firstOrNull()
+                    chosenVoice?.let {
+                        engine.voice = it
+                        selectedVoiceName = it.name
+                        if (savedVoice.isBlank()) Prefs.setTtsVoiceName(ctx, it.name)
+                    }
                     engine.setPitch(pitch)
                     engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                         override fun onStart(id: String?) { main.post { speaking = true } }
@@ -94,6 +118,24 @@ object Voice {
         pitch = value.coerceIn(0.7f, 1.3f)
         tts?.setPitch(pitch)
         appContext?.let { Prefs.setSpeechPitch(it, pitch) }
+    }
+
+    fun updateProfile(profile: String) {
+        speechProfile = if (profile == "woman") "woman" else "man"
+        appContext?.let { Prefs.setSpeechProfile(it, speechProfile) }
+        updatePitch(if (speechProfile == "woman") 1.05f else 0.78f)
+    }
+
+    fun selectVoice(name: String) {
+        val selected = tts?.voices.orEmpty().firstOrNull { it.name == name } ?: return
+        tts?.voice = selected
+        selectedVoiceName = selected.name
+        appContext?.let { Prefs.setTtsVoiceName(it, selected.name) }
+    }
+
+    fun useSystemVoice(ctx: Context) {
+        Prefs.setTtsVoiceName(ctx, "")
+        reload(ctx)
     }
 
     fun updateMuted(value: Boolean) {

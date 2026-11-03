@@ -68,6 +68,20 @@ object Prefs {
         try { sp(c).edit().putBoolean("speech_muted", muted).apply() } catch (_: Exception) {}
     }
 
+    fun getSpeechProfile(c: Context): String =
+        try { sp(c).getString("speech_profile", "man") ?: "man" } catch (_: Exception) { "man" }
+
+    fun setSpeechProfile(c: Context, profile: String) {
+        try { sp(c).edit().putString("speech_profile", profile).apply() } catch (_: Exception) {}
+    }
+
+    fun getTtsVoiceName(c: Context): String =
+        try { sp(c).getString("tts_voice_name", "") ?: "" } catch (_: Exception) { "" }
+
+    fun setTtsVoiceName(c: Context, name: String) {
+        try { sp(c).edit().putString("tts_voice_name", name).apply() } catch (_: Exception) {}
+    }
+
     fun getFacts(c: Context): List<String> = try {
         val arr = JSONArray(sp(c).getString("facts", "[]"))
         List(arr.length()) { arr.getString(it) }
