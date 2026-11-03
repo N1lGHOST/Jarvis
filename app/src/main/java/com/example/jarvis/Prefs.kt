@@ -26,7 +26,6 @@ object Prefs {
             if (!preferences.getBoolean("openrouter_key_migrated", false)) {
                 preferences.edit()
                     .remove("api_key")
-                    .remove("gemini_api_key")
                     .putBoolean("openrouter_key_migrated", true)
                     .apply()
             }
@@ -38,6 +37,22 @@ object Prefs {
 
     fun setOpenRouterKey(c: Context, key: String) {
         try { sp(c).edit().putString("openrouter_api_key", key).apply() } catch (_: Exception) {}
+    }
+
+    fun getGeminiKey(c: Context): String =
+        try { sp(c).getString("gemini_api_key", "") ?: "" } catch (e: Exception) { "" }
+
+    fun setGeminiKey(c: Context, key: String) {
+        try { sp(c).edit().putString("gemini_api_key", key).apply() } catch (_: Exception) {}
+    }
+
+    fun getAiProvider(c: Context): String =
+        try { sp(c).getString("ai_provider", "openrouter") ?: "openrouter" }
+        catch (e: Exception) { "openrouter" }
+
+    fun setAiProvider(c: Context, provider: String) {
+        if (provider !in setOf("gemini", "openrouter")) return
+        try { sp(c).edit().putString("ai_provider", provider).apply() } catch (_: Exception) {}
     }
 
     fun isWakeWordEnabled(c: Context): Boolean =
@@ -89,6 +104,26 @@ object Prefs {
 
     fun setFacts(c: Context, facts: List<String>) {
         try { sp(c).edit().putString("facts", JSONArray(facts).toString()).apply() } catch (_: Exception) {}
+    }
+
+    fun getInventory(c: Context): List<StockItem> = try {
+        val arr = JSONArray(sp(c).getString("inventory", "[]"))
+        List(arr.length()) { index ->
+            val item = arr.getJSONObject(index)
+            StockItem(item.getString("name"), item.getInt("quantity"))
+        }.filter { it.name.isNotBlank() && it.quantity > 0 }
+    } catch (e: Exception) {
+        emptyList()
+    }
+
+    fun setInventory(c: Context, items: List<StockItem>) {
+        val arr = JSONArray()
+        items.forEach { item ->
+            if (item.name.isNotBlank() && item.quantity > 0) {
+                arr.put(org.json.JSONObject().put("name", item.name).put("quantity", item.quantity))
+            }
+        }
+        sp(c).edit().putString("inventory", arr.toString()).apply()
     }
 
     fun getConversation(c: Context): List<Msg> = try {

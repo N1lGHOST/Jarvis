@@ -1,13 +1,16 @@
 package com.example.jarvis
 
 import android.Manifest
-import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -32,13 +35,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -58,11 +59,13 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -75,6 +78,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -84,12 +88,13 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 
-private val Void = Color(0xFF050A10)
-private val DeepTeal = Color(0xFF071921)
-private val Neon = Color(0xFF48F0D0)
-private val Ice = Color(0xFFB7FFF2)
-private val Muted = Color(0xFF8BA4AB)
-private val Panel = Color(0xFF101D25)
+private val Void = Color(0xFF080B13)
+private val Neon = Color(0xFF7AA8FF)
+private val Ice = Color(0xFFEAF1FF)
+private val Muted = Color(0xFF929FB8)
+private val Panel = Color(0xFF141D2D)
+private val Lavender = Color(0xFFB8A0FF)
+private val Cyan = Color(0xFF72D8F2)
 
 class MainActivity : ComponentActivity() {
     private var pendingDeviceAction by mutableStateOf<String?>(null)
@@ -99,8 +104,8 @@ class MainActivity : ComponentActivity() {
         Voice.init(this)
         Prefs.migrateApiKeys(this)
         Convo.restore(this)
-        window.statusBarColor = android.graphics.Color.rgb(5, 10, 16)
-        window.navigationBarColor = android.graphics.Color.rgb(5, 10, 16)
+        window.statusBarColor = android.graphics.Color.rgb(8, 11, 19)
+        window.navigationBarColor = android.graphics.Color.rgb(8, 11, 19)
         pendingDeviceAction = intent?.getStringExtra(WakeWordService.EXTRA_PENDING_ACTION)
         setContent {
             MaterialTheme {
@@ -128,19 +133,172 @@ private fun JarvisScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val listState = rememberLazyListState()
-    var apiKey by remember { mutableStateOf(Prefs.getOpenRouterKey(context)) }
+    val contentScrollState = rememberScrollState()
+    var aiProvider by remember { mutableStateOf(Prefs.getAiProvider(context)) }
+    var apiKey by remember(aiProvider) {
+        mutableStateOf(
+            if (aiProvider == "gemini") Prefs.getGeminiKey(context)
+            else Prefs.getOpenRouterKey(context)
+        )
+    }
     var showSettings by remember { mutableStateOf(false) }
     var showWakeDisclosure by remember { mutableStateOf(false) }
     var listening by remember { mutableStateOf(false) }
+    var voiceConversationActive by remember { mutableStateOf(false) }
+    var partialTranscript by remember { mutableStateOf("") }
     var input by remember { mutableStateOf("") }
+    var showInventory by remember { mutableStateOf(false) }
+    var inventory by remember { mutableStateOf(Prefs.getInventory(context)) }
+    var inventoryName by remember { mutableStateOf("") }
+    var inventoryQuantity by remember { mutableStateOf("1") }
+    var showWebSearch by remember { mutableStateOf(false) }
+    var webSearchInput by remember { mutableStateOf("") }
 
-    fun send(text: String) {
+    val speechRecognizer = remember(context) {
+        when {
+            !SpeechRecognizer.isRecognitionAvailable(context) -> null
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                SpeechRecognizer.isOnDeviceRecognitionAvailable(context) ->
+                SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
+            else -> SpeechRecognizer.createSpeechRecognizer(context)
+        }
+    }
+    val speechRestartHandler = remember { Handler(Looper.getMainLooper()) }
+    val currentVoiceSession = rememberUpdatedState(voiceConversationActive)
+
+    fun startVoiceRecognition() {
+        if (!currentVoiceSession.value) return
+        val recognizer = speechRecognizer
+        if (recognizer == null) {
+            voiceConversationActive = false
+            listening = false
+            Convo.error = "La reconnaissance vocale n'est pas disponible sur ce téléphone."
+            return
+        }
+        if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            voiceConversationActive = false
+            listening = false
+            Convo.error = "Autorise le microphone pour parler à Jarvis."
+            return
+        }
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "fr-FR")
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+        }
+        try {
+            partialTranscript = ""
+            listening = true
+            Convo.error = null
+            recognizer.startListening(intent)
+        } catch (_: SecurityException) {
+            listening = false
+            voiceConversationActive = false
+            Convo.error = "Android a refusé l'accès au microphone. Vérifie l'autorisation de Jarvis."
+        } catch (_: IllegalStateException) {
+            listening = false
+            if (currentVoiceSession.value) {
+                speechRestartHandler.postDelayed({ startVoiceRecognition() }, 800)
+            } else {
+                Convo.error = "Le service vocal est occupé. Réessaie dans un instant."
+            }
+        }
+    }
+
+    fun send(text: String, resumeVoiceAfterAnswer: Boolean = false) {
         val trimmed = text.trim()
         if (trimmed.isEmpty() || Convo.loading) return
         scope.launch {
-            val answer = Convo.ask(context, apiKey, trimmed)
-            Voice.speak(answer)
+            val answer = Convo.ask(context, apiKey, trimmed, aiProvider = aiProvider)
+            Voice.speak(answer) {
+                if (resumeVoiceAfterAnswer && currentVoiceSession.value) {
+                    speechRestartHandler.postDelayed({ startVoiceRecognition() }, 350)
+                }
+            }
+        }
+    }
+    val latestRecognizedSpeech = rememberUpdatedState<(String) -> Unit> {
+        send(it, resumeVoiceAfterAnswer = true)
+    }
+
+    DisposableEffect(speechRecognizer) {
+        val recognizer = speechRecognizer
+        if (recognizer != null) {
+            recognizer.setRecognitionListener(object : RecognitionListener {
+                override fun onReadyForSpeech(params: Bundle?) {
+                    listening = true
+                }
+
+                override fun onBeginningOfSpeech() {
+                    listening = true
+                    partialTranscript = ""
+                }
+
+                override fun onRmsChanged(rmsdB: Float) = Unit
+                override fun onBufferReceived(buffer: ByteArray?) = Unit
+                override fun onEndOfSpeech() {
+                    listening = false
+                    partialTranscript = ""
+                }
+
+                override fun onError(error: Int) {
+                    listening = false
+                    partialTranscript = ""
+                    if (!currentVoiceSession.value) return
+                    if (error == SpeechRecognizer.ERROR_NO_MATCH ||
+                        error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
+                        error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY
+                    ) {
+                        speechRestartHandler.postDelayed({ startVoiceRecognition() }, 500)
+                    } else {
+                        voiceConversationActive = false
+                        Convo.error = when (error) {
+                            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS ->
+                                "Autorise le microphone pour continuer la conversation vocale."
+                            SpeechRecognizer.ERROR_NETWORK,
+                            SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
+                                "Le service de reconnaissance vocale a besoin d'une connexion."
+                            SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED ->
+                                "La reconnaissance en français n'est pas disponible sur ce téléphone."
+                            else -> "La reconnaissance vocale a rencontré une erreur ($error)."
+                        }
+                    }
+                }
+
+                override fun onResults(results: Bundle?) {
+                    listening = false
+                    partialTranscript = ""
+                    val spoken = results
+                        ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        ?.firstOrNull()
+                        ?.trim()
+                    if (!spoken.isNullOrBlank()) {
+                        latestRecognizedSpeech.value(spoken)
+                    } else if (currentVoiceSession.value) {
+                        speechRestartHandler.postDelayed({ startVoiceRecognition() }, 350)
+                    }
+                }
+
+                override fun onPartialResults(results: Bundle?) {
+                    partialTranscript = results
+                        ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        ?.firstOrNull()
+                        .orEmpty()
+                }
+
+                override fun onEvent(eventType: Int, params: Bundle?) = Unit
+            })
+        }
+        onDispose {
+            voiceConversationActive = false
+            listening = false
+            speechRestartHandler.removeCallbacksAndMessages(null)
+            recognizer?.cancel()
+            recognizer?.destroy()
         }
     }
 
@@ -189,22 +347,16 @@ private fun JarvisScreen(
         requestWakeWordPermissions()
     }
 
-    val speechLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        listening = false
-        if (result.resultCode == Activity.RESULT_OK) {
-            val spoken = result.data
-                ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-                ?.firstOrNull()
-            if (!spoken.isNullOrBlank()) send(spoken)
-        }
-    }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (granted) startRecognition(speechLauncher) { listening = it }
-        else Convo.error = "Autorise le microphone pour parler à Jarvis."
+        if (granted) {
+            voiceConversationActive = true
+            startVoiceRecognition()
+        } else {
+            voiceConversationActive = false
+            Convo.error = "Autorise le microphone pour parler à Jarvis."
+        }
     }
     val ttsSettingsLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -236,15 +388,13 @@ private fun JarvisScreen(
     }
 
     LaunchedEffect(Convo.messages.size) {
-        if (Convo.messages.isNotEmpty()) {
-            listState.animateScrollToItem(Convo.messages.takeLast(8).lastIndex)
-        }
+        contentScrollState.animateScrollTo(contentScrollState.maxValue)
     }
 
     Box(
         Modifier
             .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(DeepTeal, Void, Color(0xFF020509))))
+            .background(Brush.verticalGradient(listOf(Color(0xFF111B32), Void, Color(0xFF070910))))
     ) {
         Column(
             Modifier
@@ -267,24 +417,24 @@ private fun JarvisScreen(
                         contentDescription = "Logo Jarvis",
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
-                            .size(42.dp)
+                            .size(38.dp)
                             .clip(CircleShape)
-                            .border(1.dp, Neon.copy(alpha = 0.65f), CircleShape)
+                            .border(1.dp, Neon.copy(alpha = 0.72f), CircleShape)
                     )
-                    Spacer(Modifier.width(12.dp))
+                    Spacer(Modifier.width(10.dp))
                     Column {
                         Text(
                             "JARVIS",
                             color = Ice,
-                            fontSize = 19.sp,
+                            fontSize = 17.sp,
                             fontWeight = FontWeight.SemiBold,
-                            letterSpacing = 4.sp
+                            letterSpacing = 3.sp
                         )
                         Text(
-                            "PERSONAL INTELLIGENCE",
+                            "WORKFLOW ASSISTANT",
                             color = Muted,
                             fontSize = 8.sp,
-                            letterSpacing = 1.8.sp
+                            letterSpacing = 1.3.sp
                         )
                     }
                 }
@@ -297,138 +447,255 @@ private fun JarvisScreen(
                         )
                     }
                     TextButton(onClick = { showSettings = true }) {
-                        Text("RÉGLAGES", color = Neon, fontSize = 11.sp, letterSpacing = 1.sp)
+                        Text("RÉGLAGES", color = Ice.copy(alpha = 0.8f), fontSize = 10.sp, letterSpacing = 0.7.sp)
                     }
                 }
             }
 
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "TON ASSISTANT, TOUJOURS DISPONIBLE",
-                color = Muted,
-                fontSize = 10.sp,
-                letterSpacing = 2.sp,
-                modifier = Modifier.fillMaxWidth(),
-                textAlign = TextAlign.Center
-            )
-
-            Row(
+            Column(
                 Modifier
+                    .weight(1f)
                     .fillMaxWidth()
-                    .padding(top = 14.dp)
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(Panel.copy(alpha = 0.82f))
-                    .border(1.dp, Neon.copy(alpha = 0.14f), RoundedCornerShape(18.dp))
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                    .verticalScroll(contentScrollState)
+                    .padding(top = 8.dp)
             ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        if (WakeWordState.active) "MODE VEILLE ACTIF" else "MODE VEILLE",
-                        color = if (WakeWordState.active) Neon else Ice,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        letterSpacing = 1.2.sp
-                    )
-                    Text(
-                        if (WakeWordState.active) "Micro actif · ${WakeWordState.status}"
-                        else "Dis « Jarvis » en gardant la notification",
-                        color = Muted,
-                        fontSize = 11.sp
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(Panel.copy(alpha = 0.92f))
+                        .border(1.dp, Color.White.copy(alpha = 0.07f), RoundedCornerShape(18.dp))
+                        .padding(horizontal = 14.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            if (WakeWordState.active) "VEILLE ACTIVE" else "ACTIONS LOCALES",
+                            color = if (WakeWordState.active) Cyan else Ice,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            letterSpacing = 1.sp
+                        )
+                        Text(
+                            if (WakeWordState.active) "Micro actif · ${WakeWordState.status}"
+                            else "Commandes sur l'appareil · IA via OpenRouter",
+                            color = Muted,
+                            fontSize = 10.sp
+                        )
+                    }
+                    Switch(
+                        checked = WakeWordState.active,
+                        onCheckedChange = { setWakeWordEnabled(it) }
                     )
                 }
-                Switch(
-                    checked = WakeWordState.active,
-                    onCheckedChange = { setWakeWordEnabled(it) }
-                )
-            }
 
-            BoxWithConstraints(
-                Modifier.fillMaxWidth().weight(0.94f),
-                contentAlignment = Alignment.Center
-            ) {
-                JarvisOrb(
-                    listening = listening,
-                    speaking = Voice.speaking,
-                    thinking = Convo.loading,
-                    diameter = maxHeight.coerceIn(150.dp, 250.dp),
-                    onClick = {
-                        if (!listening && !Convo.loading) {
-                            if (Voice.speaking) Voice.stop()
-                            if (WakeWordState.active) {
-                                WakeWordService.requestCommand(context)
-                            } else if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
-                                android.content.pm.PackageManager.PERMISSION_GRANTED
-                            ) {
-                                startRecognition(speechLauncher) { listening = it }
-                            } else {
-                                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(top = 14.dp)
+                        .clip(RoundedCornerShape(26.dp))
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color(0xFF1B2943).copy(alpha = 0.96f), Panel.copy(alpha = 0.94f))
+                            )
+                        )
+                        .border(1.dp, Neon.copy(alpha = 0.22f), RoundedCornerShape(26.dp))
+                        .padding(horizontal = 18.dp, vertical = 16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        "TON ESPACE DE TRAVAIL",
+                        color = Neon,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 2.sp
+                    )
+                    Text(
+                        "Bonjour. Que faisons-nous ?",
+                        color = Ice,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = 5.dp)
+                    )
+                    Text(
+                        "Parle à Jarvis ou demande-lui une action.",
+                        color = Muted,
+                        fontSize = 12.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = 3.dp)
+                    )
+                    BoxWithConstraints(
+                        Modifier.fillMaxWidth().height(260.dp)
+                    ) {
+                        val orbitX = (maxWidth / 2 - 114.dp).coerceAtLeast(18.dp)
+                        val satelliteOffset = Modifier.width(72.dp)
+                        Canvas(Modifier.fillMaxSize()) {
+                            val centerX = size.width / 2
+                            val centerY = size.height / 2
+                            val x = orbitX.toPx() + 36.dp.toPx()
+                            val y = 29.dp.toPx()
+                            val targets = listOf(
+                                androidx.compose.ui.geometry.Offset(x, y),
+                                androidx.compose.ui.geometry.Offset(size.width - x, y),
+                                androidx.compose.ui.geometry.Offset(x, size.height - y - 10.dp.toPx()),
+                                androidx.compose.ui.geometry.Offset(
+                                    size.width - x,
+                                    size.height - y - 10.dp.toPx()
+                                )
+                            )
+                            targets.forEach { target ->
+                                drawLine(
+                                    color = Neon.copy(alpha = 0.22f),
+                                    start = androidx.compose.ui.geometry.Offset(centerX, centerY),
+                                    end = target,
+                                    strokeWidth = 1.dp.toPx(),
+                                    cap = StrokeCap.Round
+                                )
+                                drawCircle(
+                                    color = Cyan.copy(alpha = 0.42f),
+                                    radius = 2.dp.toPx(),
+                                    center = target
+                                )
                             }
                         }
+                        OrbitNode(
+                            label = "STOCK",
+                            mark = "ST",
+                            accent = Lavender,
+                            modifier = satelliteOffset
+                                .align(Alignment.TopStart)
+                                .offset(x = orbitX, y = 10.dp)
+                        ) {
+                            inventory = Prefs.getInventory(context)
+                            showInventory = true
+                        }
+                        OrbitNode(
+                            label = "BATTERIE",
+                            mark = "%",
+                            accent = Cyan,
+                            modifier = satelliteOffset
+                                .align(Alignment.TopEnd)
+                                .offset(x = -orbitX, y = 10.dp)
+                        ) { send("quel est le niveau de ma batterie") }
+                        OrbitNode(
+                            label = "RECHERCHE",
+                            mark = "WEB",
+                            accent = Neon,
+                            modifier = satelliteOffset
+                                .align(Alignment.BottomStart)
+                                .offset(x = orbitX, y = (-10).dp)
+                        ) { showWebSearch = true }
+                        OrbitNode(
+                            label = "MINUTEUR",
+                            mark = "5′",
+                            accent = Color(0xFFFFB978),
+                            modifier = satelliteOffset
+                                .align(Alignment.BottomEnd)
+                                .offset(x = -orbitX, y = (-10).dp)
+                        ) { send("mets un minuteur de 5 minutes") }
+                        JarvisOrb(
+                            listening = listening,
+                            speaking = Voice.speaking,
+                            thinking = Convo.loading,
+                            diameter = 138.dp,
+                            modifier = Modifier.align(Alignment.Center),
+                            onClick = {
+                                if (WakeWordState.active) {
+                                    if (!listening && !Convo.loading) {
+                                        WakeWordService.requestCommand(context)
+                                    }
+                                } else if (voiceConversationActive) {
+                                    voiceConversationActive = false
+                                    listening = false
+                                    partialTranscript = ""
+                                    speechRestartHandler.removeCallbacksAndMessages(null)
+                                    speechRecognizer?.cancel()
+                                    Voice.stop()
+                                } else if (!Convo.loading) {
+                                    if (Voice.speaking) Voice.stop()
+                                    if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+                                        android.content.pm.PackageManager.PERMISSION_GRANTED
+                                    ) {
+                                        voiceConversationActive = true
+                                        startVoiceRecognition()
+                                    } else {
+                                        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                    }
+                                }
+                            }
+                        )
                     }
-                )
-            }
-
-            Text(
-                when {
-                    Convo.loading -> "JE RÉFLÉCHIS"
-                    Voice.speaking -> "JE TE RÉPONDS"
-                    listening || (WakeWordState.active && WakeWordState.listening) -> "JE T'ÉCOUTE"
-                    WakeWordState.active -> "DIS « JARVIS » OU TOUCHE L'ORB"
-                    else -> "TOUCHE L'ORB POUR PARLER"
-                },
-                color = if (listening || Voice.speaking || Convo.loading) Neon else Muted,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
-                letterSpacing = 2.2.sp,
-                modifier = Modifier.fillMaxWidth(),
-                textAlign = TextAlign.Center
-            )
-
-            Row(
-                Modifier.fillMaxWidth().padding(top = 8.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                TextButton(onClick = { send("ouvre les paramètres") }) {
-                    Text("PARAMÈTRES", color = Neon, fontSize = 9.sp, letterSpacing = 0.5.sp)
+                    Text(
+                        when {
+                            Convo.loading -> "JARVIS RÉFLÉCHIT"
+                            Voice.speaking -> "JARVIS RÉPOND"
+                            listening || (WakeWordState.active && WakeWordState.listening) -> "JARVIS ÉCOUTE"
+                            voiceConversationActive -> "TOUCHE L'ORB POUR TERMINER"
+                            WakeWordState.active -> "DIS « JARVIS » OU TOUCHE L'ORB"
+                            else -> "TOUCHE L'ORB POUR PARLER"
+                        },
+                        color = if (listening || Voice.speaking || Convo.loading) Cyan else Muted,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Medium,
+                        letterSpacing = 1.6.sp,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.Center
+                    )
+                    if (partialTranscript.isNotBlank()) {
+                        Text(
+                            partialTranscript,
+                            color = Ice,
+                            fontSize = 12.sp,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth().padding(top = 5.dp)
+                        )
+                    }
                 }
-                TextButton(onClick = { send("monte le volume") }) {
-                    Text("VOLUME +", color = Neon, fontSize = 9.sp, letterSpacing = 0.5.sp)
-                }
-                TextButton(onClick = { send("mets un minuteur de 5 minutes") }) {
-                    Text("MINUTEUR", color = Neon, fontSize = 9.sp, letterSpacing = 0.5.sp)
-                }
-            }
 
-            if (Convo.error != null) {
-                Text(
-                    text = Convo.error.orEmpty(),
-                    color = Color(0xFFFF9E9E),
-                    fontSize = 12.sp,
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                    textAlign = TextAlign.Center
-                )
-            }
-
-            LazyColumn(
-                state = listState,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(0.9f)
-                    .padding(top = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                itemsIndexed(Convo.messages.takeLast(8)) { _, message ->
-                    MessageCard(message)
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 20.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("CONVERSATION", color = Ice, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.2.sp)
+                    Text(
+                        if (Convo.messages.isEmpty()) "NOUVELLE CONVERSATION" else "${Convo.messages.size} MESSAGES",
+                        color = Muted,
+                        fontSize = 8.sp,
+                        letterSpacing = 0.8.sp
+                    )
+                }
+                if (Convo.error != null) {
+                    Text(
+                        text = Convo.error.orEmpty(),
+                        color = Color(0xFFFF9E9E),
+                        fontSize = 12.sp,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                        textAlign = TextAlign.Center
+                    )
+                }
+                if (Convo.messages.isEmpty()) {
+                    Text(
+                        "Essaie « quelle heure est-il ? », « liste mon stock » ou une question à Jarvis.",
+                        color = Muted,
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp,
+                        modifier = Modifier.padding(bottom = 14.dp)
+                    )
+                } else {
+                    Convo.messages.takeLast(8).forEach { message ->
+                        MessageCard(message)
+                        Spacer(Modifier.height(9.dp))
+                    }
                 }
             }
 
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(top = 8.dp, bottom = 16.dp),
+                    .padding(top = 8.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 OutlinedTextField(
@@ -472,25 +739,65 @@ private fun JarvisScreen(
     }
 
     if (showSettings) {
-        var draft by remember(apiKey) { mutableStateOf(apiKey) }
+        var draftProvider by remember(aiProvider) { mutableStateOf(aiProvider) }
+        var draft by remember(draftProvider, apiKey) {
+            mutableStateOf(
+                if (draftProvider == "gemini") Prefs.getGeminiKey(context)
+                else Prefs.getOpenRouterKey(context)
+            )
+        }
         AlertDialog(
             onDismissRequest = { showSettings = false },
             containerColor = Panel,
             title = { Text("Réglages Jarvis", color = Ice) },
             text = {
                 Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState())) {
+                    Text("FOURNISSEUR IA", color = Ice, fontSize = 12.sp, letterSpacing = 1.sp)
                     Text(
-                        "Réponses IA via openrouter/free : limites et disponibilité varient selon le compte et le modèle. Vérifie les conditions dans OpenRouter; aucun service gratuit n'est garanti.",
+                        "Les actions du téléphone sont exécutées localement. Pour les réponses IA, le message, les échanges récents (qui peuvent inclure des commandes locales) et les souvenirs fournis sont envoyés au fournisseur choisi.",
                         color = Muted,
-                        fontSize = 13.sp
+                        fontSize = 12.sp
+                    )
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf("gemini" to "GEMINI", "openrouter" to "OPENROUTER").forEach { (id, label) ->
+                            val selected = draftProvider == id
+                            Button(
+                                onClick = {
+                                    if (draftProvider != id) draftProvider = id
+                                },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(14.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (selected) Neon.copy(alpha = 0.18f) else Void,
+                                    contentColor = if (selected) Neon else Muted
+                                )
+                            ) {
+                                Text(label, fontSize = 10.sp, letterSpacing = 0.5.sp)
+                            }
+                        }
+                    }
+                    Text(
+                        if (draftProvider == "gemini") {
+                            "Gemini 2.5 Flash · API Google AI Studio. Cette option nécessite une clé Gemini."
+                        } else {
+                            "OpenRouter free · modèle gratuit disponible selon le compte et le fournisseur."
+                        },
+                        color = Muted,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(top = 6.dp)
                     )
                     Spacer(Modifier.height(14.dp))
                     OutlinedTextField(
                         value = draft,
                         onValueChange = { draft = it },
                         singleLine = true,
-                        label = { Text("Clé API OpenRouter") },
-                        placeholder = { Text("sk-or-v1-…") },
+                        label = { Text("Clé API ${if (draftProvider == "gemini") "Gemini" else "OpenRouter"}") },
+                        placeholder = {
+                            Text(if (draftProvider == "gemini") "Clé Google AI Studio" else "sk-or-v1-…")
+                        },
                         visualTransformation = PasswordVisualTransformation(),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = Ice,
@@ -609,7 +916,7 @@ private fun JarvisScreen(
                         Text("Effacer la conversation", color = Color(0xFFFF9E9E))
                     }
                     Text(
-                        "Veille = microphone actif, même avant « Jarvis ». Android privilégie la reconnaissance hors ligne si disponible; sinon son service vocal peut traiter les extraits. Les messages IA sont transmis à OpenRouter et à son fournisseur. Une clé dans une APK peut être extraite. Mémoire locale : ${Prefs.getFacts(context).size} élément(s).",
+                        "Veille = microphone actif, même avant « Jarvis ». La détection utilise la reconnaissance française hors ligne si elle est disponible; sinon la veille s'arrête sans envoyer l'audio à un service vocal en ligne. Les requêtes IA et les échanges récents sont transmis au fournisseur choisi. Une clé dans une APK peut être extraite. Mémoire locale : ${Prefs.getFacts(context).size} élément(s).",
                         color = Muted,
                         fontSize = 12.sp
                     )
@@ -618,12 +925,160 @@ private fun JarvisScreen(
             confirmButton = {
                 TextButton(onClick = {
                     apiKey = draft.trim()
-                    Prefs.setOpenRouterKey(context, apiKey)
+                    if (draftProvider == "gemini") {
+                        Prefs.setGeminiKey(context, apiKey)
+                    } else {
+                        Prefs.setOpenRouterKey(context, apiKey)
+                    }
+                    Prefs.setAiProvider(context, draftProvider)
+                    aiProvider = draftProvider
                     showSettings = false
                 }) { Text("ENREGISTRER", color = Neon) }
             },
             dismissButton = {
                 TextButton(onClick = { showSettings = false }) {
+                    Text("FERMER", color = Muted)
+                }
+            }
+        )
+    }
+
+    if (showWebSearch) {
+        AlertDialog(
+            onDismissRequest = { showWebSearch = false },
+            containerColor = Panel,
+            title = { Text("Recherche Web", color = Ice) },
+            text = {
+                Column {
+                    Text(
+                        "La recherche s'ouvrira dans le navigateur de ton téléphone.",
+                        color = Muted,
+                        fontSize = 13.sp
+                    )
+                    OutlinedTextField(
+                        value = webSearchInput,
+                        onValueChange = { webSearchInput = it },
+                        singleLine = true,
+                        label = { Text("Que veux-tu chercher ?") },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Ice,
+                            unfocusedTextColor = Ice,
+                            focusedBorderColor = Neon,
+                            unfocusedBorderColor = Muted.copy(alpha = 0.45f),
+                            focusedLabelColor = Neon,
+                            unfocusedLabelColor = Muted,
+                            cursorColor = Neon
+                        )
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = webSearchInput.isNotBlank(),
+                    onClick = {
+                        send("cherche sur le Web ${webSearchInput.trim()}")
+                        webSearchInput = ""
+                        showWebSearch = false
+                    }
+                ) { Text("RECHERCHER", color = Neon) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showWebSearch = false }) {
+                    Text("ANNULER", color = Muted)
+                }
+            }
+        )
+    }
+
+    if (showInventory) {
+        AlertDialog(
+            onDismissRequest = { showInventory = false },
+            containerColor = Panel,
+            title = { Text("Mon stock", color = Ice) },
+            text = {
+                Column(Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState())) {
+                    if (inventory.isEmpty()) {
+                        Text("Aucun article pour le moment.", color = Muted, fontSize = 13.sp)
+                    } else {
+                        inventory.forEach { item ->
+                            Row(
+                                Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(item.name, color = Ice, modifier = Modifier.weight(1f))
+                                TextButton(onClick = {
+                                    Inventory.setQuantity(context, inventory, item.name, item.quantity - 1)
+                                    inventory = Prefs.getInventory(context)
+                                }) { Text("−", color = Neon, fontSize = 20.sp) }
+                                Text("${item.quantity}", color = Ice, fontWeight = FontWeight.SemiBold)
+                                TextButton(onClick = {
+                                    Inventory.setQuantity(context, inventory, item.name, item.quantity + 1)
+                                    inventory = Prefs.getInventory(context)
+                                }) { Text("+", color = Neon, fontSize = 20.sp) }
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = inventoryName,
+                        onValueChange = { inventoryName = it },
+                        singleLine = true,
+                        label = { Text("Article") },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Ice,
+                            unfocusedTextColor = Ice,
+                            focusedBorderColor = Neon,
+                            unfocusedBorderColor = Muted.copy(alpha = 0.45f),
+                            focusedLabelColor = Neon,
+                            unfocusedLabelColor = Muted,
+                            cursorColor = Neon
+                        )
+                    )
+                    OutlinedTextField(
+                        value = inventoryQuantity,
+                        onValueChange = { value ->
+                            if (value.all(Char::isDigit)) inventoryQuantity = value
+                        },
+                        singleLine = true,
+                        label = { Text("Quantité") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Ice,
+                            unfocusedTextColor = Ice,
+                            focusedBorderColor = Neon,
+                            unfocusedBorderColor = Muted.copy(alpha = 0.45f),
+                            focusedLabelColor = Neon,
+                            unfocusedLabelColor = Muted,
+                            cursorColor = Neon
+                        )
+                    )
+                    Text(
+                        "À la voix : « ajoute 2 pommes », « retire 1 pomme », « fixe la quantité de pommes à 5 » ou « liste mon stock ».",
+                        color = Muted,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(top = 10.dp)
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = inventoryName.isNotBlank() && inventoryQuantity.toIntOrNull() != null,
+                    onClick = {
+                        Inventory.setQuantity(
+                            context,
+                            inventory,
+                            inventoryName,
+                            inventoryQuantity.toIntOrNull() ?: 0
+                        )
+                        inventory = Prefs.getInventory(context)
+                        inventoryName = ""
+                        inventoryQuantity = "1"
+                    }
+                ) { Text("ENREGISTRER", color = Neon) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showInventory = false }) {
                     Text("FERMER", color = Muted)
                 }
             }
@@ -637,7 +1092,7 @@ private fun JarvisScreen(
             title = { Text("Écoute en arrière-plan", color = Ice) },
             text = {
                 Text(
-                    "Jarvis garde une notification visible et utilise le microphone jusqu'à ce que tu désactives la veille. Android transmet la voix au service de reconnaissance installé sur le téléphone; il peut traiter aussi les paroles entendues avant « Jarvis ». Active ce mode seulement si tu l'acceptes. Android ou l'économie d'énergie peuvent interrompre l'écoute.",
+                    "Jarvis garde une notification visible et utilise le microphone jusqu'à ce que tu désactives la veille. La reconnaissance essaie de fonctionner entièrement hors ligne et entend aussi les paroles avant « Jarvis » pour détecter le mot de réveil. Si la reconnaissance hors ligne en français n'est pas disponible, la veille s'arrête au lieu d'envoyer les extraits audio en ligne. Active ce mode seulement si tu l'acceptes. Android ou l'économie d'énergie peuvent interrompre l'écoute.",
                     color = Muted,
                     fontSize = 13.sp
                 )
@@ -658,31 +1113,13 @@ private fun JarvisScreen(
     }
 }
 
-private fun startRecognition(
-    launcher: androidx.activity.result.ActivityResultLauncher<Intent>,
-    onListeningChanged: (Boolean) -> Unit
-) {
-    val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE, "fr-FR")
-        putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-        putExtra(RecognizerIntent.EXTRA_PROMPT, "Jarvis t'écoute…")
-    }
-    try {
-        onListeningChanged(true)
-        launcher.launch(intent)
-    } catch (e: ActivityNotFoundException) {
-        onListeningChanged(false)
-        Convo.error = "La reconnaissance vocale n'est pas disponible sur ce téléphone."
-    }
-}
-
 @Composable
 private fun JarvisOrb(
     listening: Boolean,
     speaking: Boolean,
     thinking: Boolean,
     diameter: Dp,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     val active = listening || speaking || thinking
@@ -702,11 +1139,12 @@ private fun JarvisOrb(
             rotation.snapTo(0f)
         }
     }
-    val glow = if (active) Neon else Color(0xFF19AAB1)
+    val glow = if (active) Cyan else Neon
 
     Box(
         modifier = Modifier
             .size(diameter)
+            .then(modifier)
             .shadow(30.dp, CircleShape, ambientColor = glow.copy(alpha = 0.24f), spotColor = glow.copy(alpha = 0.25f))
             .clip(CircleShape)
             .background(Brush.radialGradient(listOf(glow.copy(alpha = 0.12f), Void.copy(alpha = 0.3f), Color.Transparent)))
@@ -768,6 +1206,37 @@ private fun JarvisOrb(
 }
 
 @Composable
+private fun OrbitNode(
+    label: String,
+    mark: String,
+    accent: Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(3.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Box(
+            Modifier
+                .size(40.dp)
+                .shadow(9.dp, CircleShape, ambientColor = accent.copy(alpha = 0.14f))
+                .clip(CircleShape)
+                .background(Panel)
+                .border(1.dp, accent.copy(alpha = 0.68f), CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(mark, color = accent, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.3.sp)
+        }
+        Text(label, color = Ice.copy(alpha = 0.9f), fontSize = 8.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.4.sp)
+    }
+}
+
+@Composable
 private fun MessageCard(message: Msg) {
     val user = message.role == "user"
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (user) Arrangement.End else Arrangement.Start) {
@@ -775,7 +1244,7 @@ private fun MessageCard(message: Msg) {
             Modifier
                 .fillMaxWidth(0.88f)
                 .clip(RoundedCornerShape(18.dp))
-                .background(if (user) Color(0xFF103A40) else Panel.copy(alpha = 0.9f))
+                .background(if (user) Color(0xFF1C3455) else Panel.copy(alpha = 0.9f))
                 .border(
                     1.dp,
                     if (user) Neon.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.055f),

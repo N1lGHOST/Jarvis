@@ -35,7 +35,8 @@ object Convo {
         ctx: Context,
         apiKey: String,
         text: String,
-        allowActivityLaunch: Boolean = true
+        allowActivityLaunch: Boolean = true,
+        aiProvider: String = "openrouter"
     ): String {
         val app = ctx.applicationContext
         messages.add(Msg("user", text))
@@ -46,13 +47,19 @@ object Convo {
             persist(app)
             return answer
         }
+        Inventory.respond(app, text)?.let { answer ->
+            messages.add(Msg("assistant", answer))
+            persist(app)
+            return answer
+        }
         DeviceActions.execute(app, text, allowActivityLaunch)?.let { result ->
             messages.add(Msg("assistant", result.answer))
             persist(app)
             return result.answer
         }
         if (apiKey.isBlank()) {
-            val answer = "Pour répondre aux questions, ajoute ta clé OpenRouter dans Réglages."
+            val providerName = if (aiProvider == "gemini") "Gemini" else "OpenRouter"
+            val answer = "Pour répondre aux questions, ajoute ta clé API $providerName dans Réglages."
             messages.add(Msg("assistant", answer))
             persist(app)
             return answer
@@ -61,7 +68,11 @@ object Convo {
         val history = messages.takeLast(20).dropWhile { it.role != "user" }
         return try {
             val answer = withContext(Dispatchers.IO) {
-                OpenRouterClient.ask(apiKey, history, Prefs.getFacts(app))
+                if (aiProvider == "gemini") {
+                    GeminiClient.ask(apiKey, history, Prefs.getFacts(app))
+                } else {
+                    OpenRouterClient.ask(apiKey, history, Prefs.getFacts(app))
+                }
             }
             messages.add(Msg("assistant", answer))
             persist(app)
