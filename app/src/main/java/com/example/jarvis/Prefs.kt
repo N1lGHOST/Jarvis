@@ -40,6 +40,20 @@ object Prefs {
         try { sp(c).edit().putString("openrouter_api_key", key).apply() } catch (_: Exception) {}
     }
 
+    fun isWakeWordEnabled(c: Context): Boolean =
+        try { sp(c).getBoolean("wake_word_enabled", false) } catch (_: Exception) { false }
+
+    fun setWakeWordEnabled(c: Context, enabled: Boolean) {
+        try { sp(c).edit().putBoolean("wake_word_enabled", enabled).apply() } catch (_: Exception) {}
+    }
+
+    fun hasWakeWordDisclosureConsent(c: Context): Boolean =
+        try { sp(c).getBoolean("wake_word_disclosure_consent", false) } catch (_: Exception) { false }
+
+    fun setWakeWordDisclosureConsent(c: Context) {
+        try { sp(c).edit().putBoolean("wake_word_disclosure_consent", true).apply() } catch (_: Exception) {}
+    }
+
     fun getFacts(c: Context): List<String> = try {
         val arr = JSONArray(sp(c).getString("facts", "[]"))
         List(arr.length()) { arr.getString(it) }

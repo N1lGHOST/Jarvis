@@ -25,13 +25,34 @@ object Convo {
         error = null
     }
 
+    fun recordActionResult(ctx: Context, answer: String) {
+        messages.add(Msg("assistant", answer))
+        persist(ctx.applicationContext)
+    }
+
     /** Renvoie le texte à dire à voix haute. */
-    suspend fun ask(ctx: Context, apiKey: String, text: String): String {
+    suspend fun ask(
+        ctx: Context,
+        apiKey: String,
+        text: String,
+        allowActivityLaunch: Boolean = true
+    ): String {
         val app = ctx.applicationContext
         messages.add(Msg("user", text))
         persist(app)
         error = null
         handleMemoryRequest(app, text)?.let { answer ->
+            messages.add(Msg("assistant", answer))
+            persist(app)
+            return answer
+        }
+        DeviceActions.execute(app, text, allowActivityLaunch)?.let { result ->
+            messages.add(Msg("assistant", result.answer))
+            persist(app)
+            return result.answer
+        }
+        if (apiKey.isBlank()) {
+            val answer = "Pour répondre aux questions, ajoute ta clé OpenRouter dans Réglages."
             messages.add(Msg("assistant", answer))
             persist(app)
             return answer

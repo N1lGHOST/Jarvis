@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.speech.RecognizerIntent
 import androidx.activity.ComponentActivity
@@ -23,6 +24,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -48,6 +50,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -73,6 +76,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 
@@ -84,6 +88,8 @@ private val Muted = Color(0xFF8BA4AB)
 private val Panel = Color(0xFF101D25)
 
 class MainActivity : ComponentActivity() {
+    private var pendingDeviceAction by mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Voice.init(this)
@@ -91,37 +97,92 @@ class MainActivity : ComponentActivity() {
         Convo.restore(this)
         window.statusBarColor = android.graphics.Color.rgb(5, 10, 16)
         window.navigationBarColor = android.graphics.Color.rgb(5, 10, 16)
+        pendingDeviceAction = intent?.getStringExtra(WakeWordService.EXTRA_PENDING_ACTION)
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = Void) {
-                    JarvisScreen()
+                    JarvisScreen(
+                        pendingDeviceAction = pendingDeviceAction,
+                        clearPendingDeviceAction = { pendingDeviceAction = null }
+                    )
                 }
             }
         }
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingDeviceAction = intent.getStringExtra(WakeWordService.EXTRA_PENDING_ACTION)
+    }
 }
 
 @Composable
-private fun JarvisScreen() {
+private fun JarvisScreen(
+    pendingDeviceAction: String?,
+    clearPendingDeviceAction: () -> Unit
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     var apiKey by remember { mutableStateOf(Prefs.getOpenRouterKey(context)) }
-    var showSettings by remember { mutableStateOf(apiKey.isBlank()) }
+    var showSettings by remember { mutableStateOf(false) }
+    var showWakeDisclosure by remember { mutableStateOf(false) }
     var listening by remember { mutableStateOf(false) }
     var input by remember { mutableStateOf("") }
 
     fun send(text: String) {
         val trimmed = text.trim()
         if (trimmed.isEmpty() || Convo.loading) return
-        if (apiKey.isBlank()) {
-            showSettings = true
-            return
-        }
         scope.launch {
             val answer = Convo.ask(context, apiKey, trimmed)
             Voice.speak(answer)
         }
+    }
+
+    val wakePermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { grants ->
+        val microphoneGranted = grants[Manifest.permission.RECORD_AUDIO] == true ||
+            context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        val notificationsGranted = Build.VERSION.SDK_INT < 33 ||
+            grants[Manifest.permission.POST_NOTIFICATIONS] == true ||
+            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (microphoneGranted && notificationsGranted) {
+            Prefs.setWakeWordEnabled(context, true)
+            WakeWordService.start(context)
+        } else {
+            Convo.error = "Autorise le microphone et les notifications pour activer l'écoute en arrière-plan."
+        }
+    }
+
+    fun requestWakeWordPermissions() {
+        val permissions = mutableListOf(Manifest.permission.RECORD_AUDIO)
+        if (Build.VERSION.SDK_INT >= 33) permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+        val missing = permissions.filter {
+            context.checkSelfPermission(it) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isEmpty()) {
+            Prefs.setWakeWordEnabled(context, true)
+            WakeWordService.start(context)
+        } else {
+            wakePermissionLauncher.launch(missing.toTypedArray())
+        }
+    }
+
+    fun setWakeWordEnabled(enabled: Boolean) {
+        if (!enabled) {
+            Prefs.setWakeWordEnabled(context, false)
+            WakeWordService.stop(context)
+            return
+        }
+        if (!Prefs.hasWakeWordDisclosureConsent(context)) {
+            showWakeDisclosure = true
+            return
+        }
+        requestWakeWordPermissions()
     }
 
     val speechLauncher = rememberLauncherForActivityResult(
@@ -140,6 +201,29 @@ private fun JarvisScreen() {
     ) { granted ->
         if (granted) startRecognition(speechLauncher) { listening = it }
         else Convo.error = "Autorise le microphone pour parler à Jarvis."
+    }
+
+    LaunchedEffect(Unit) {
+        if (Prefs.isWakeWordEnabled(context) &&
+            context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED &&
+            (Build.VERSION.SDK_INT < 33 ||
+                context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED)
+        ) {
+            WakeWordService.start(context)
+        }
+    }
+
+    LaunchedEffect(pendingDeviceAction) {
+        val command = pendingDeviceAction ?: return@LaunchedEffect
+        val result = DeviceActions.execute(context, command, allowActivityLaunch = true)
+        if (result != null) {
+            Convo.recordActionResult(context, result.answer)
+            Voice.speak(result.answer)
+        }
+        WakeWordService.pendingActionHandled(context)
+        clearPendingDeviceAction()
     }
 
     LaunchedEffect(Convo.messages.size) {
@@ -202,7 +286,7 @@ private fun JarvisScreen() {
 
             Spacer(Modifier.height(6.dp))
             Text(
-                "TON ASSISTANT, À TON ÉCOUTE",
+                "TON ASSISTANT, TOUJOURS DISPONIBLE",
                 color = Muted,
                 fontSize = 10.sp,
                 letterSpacing = 2.sp,
@@ -210,15 +294,52 @@ private fun JarvisScreen() {
                 textAlign = TextAlign.Center
             )
 
-            Box(Modifier.fillMaxWidth().weight(0.94f), contentAlignment = Alignment.Center) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 14.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Panel.copy(alpha = 0.82f))
+                    .border(1.dp, Neon.copy(alpha = 0.14f), RoundedCornerShape(18.dp))
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        if (WakeWordState.active) "MODE VEILLE ACTIF" else "MODE VEILLE",
+                        color = if (WakeWordState.active) Neon else Ice,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 1.2.sp
+                    )
+                    Text(
+                        if (WakeWordState.active) WakeWordState.status else "Dis « Jarvis » en gardant la notification",
+                        color = Muted,
+                        fontSize = 11.sp
+                    )
+                }
+                Switch(
+                    checked = WakeWordState.active,
+                    onCheckedChange = { setWakeWordEnabled(it) }
+                )
+            }
+
+            BoxWithConstraints(
+                Modifier.fillMaxWidth().weight(0.94f),
+                contentAlignment = Alignment.Center
+            ) {
                 JarvisOrb(
                     listening = listening,
                     speaking = Voice.speaking,
                     thinking = Convo.loading,
+                    diameter = maxHeight.coerceIn(150.dp, 250.dp),
                     onClick = {
                         if (!listening && !Convo.loading) {
                             if (Voice.speaking) Voice.stop()
-                            if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+                            if (WakeWordState.active) {
+                                WakeWordService.requestCommand(context)
+                            } else if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
                                 android.content.pm.PackageManager.PERMISSION_GRANTED
                             ) {
                                 startRecognition(speechLauncher) { listening = it }
@@ -234,7 +355,8 @@ private fun JarvisScreen() {
                 when {
                     Convo.loading -> "JE RÉFLÉCHIS"
                     Voice.speaking -> "JE TE RÉPONDS"
-                    listening -> "JE T'ÉCOUTE"
+                    listening || (WakeWordState.active && WakeWordState.listening) -> "JE T'ÉCOUTE"
+                    WakeWordState.active -> "DIS « JARVIS » OU TOUCHE L'ORB"
                     else -> "TOUCHE L'ORB POUR PARLER"
                 },
                 color = if (listening || Voice.speaking || Convo.loading) Neon else Muted,
@@ -244,6 +366,22 @@ private fun JarvisScreen() {
                 modifier = Modifier.fillMaxWidth(),
                 textAlign = TextAlign.Center
             )
+
+            Row(
+                Modifier.fillMaxWidth().padding(top = 8.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(onClick = { send("ouvre les paramètres") }) {
+                    Text("PARAMÈTRES", color = Neon, fontSize = 9.sp, letterSpacing = 0.5.sp)
+                }
+                TextButton(onClick = { send("monte le volume") }) {
+                    Text("VOLUME +", color = Neon, fontSize = 9.sp, letterSpacing = 0.5.sp)
+                }
+                TextButton(onClick = { send("mets un minuteur de 5 minutes") }) {
+                    Text("MINUTEUR", color = Neon, fontSize = 9.sp, letterSpacing = 0.5.sp)
+                }
+            }
 
             if (Convo.error != null) {
                 Text(
@@ -323,7 +461,7 @@ private fun JarvisScreen() {
             text = {
                 Column {
                     Text(
-                        "Jarvis utilise le routeur openrouter/free. Limites actuelles : 20 requêtes/minute et 50/jour. Le modèle disponible, l'accès régional et les règles de données dépendent d'OpenRouter et du fournisseur choisi. Vérifie ton compte et ses limites avant usage; aucune disponibilité gratuite n'est garantie.",
+                        "Réponses IA via openrouter/free : limites et disponibilité varient selon le compte et le modèle. Vérifie les conditions dans OpenRouter; aucun service gratuit n'est garanti.",
                         color = Muted,
                         fontSize = 13.sp
                     )
@@ -350,7 +488,7 @@ private fun JarvisScreen() {
                         Text("Effacer la conversation", color = Color(0xFFFF9E9E))
                     }
                     Text(
-                        "La clé est conservée chiffrée sur ce téléphone, mais une clé utilisée dans une APK peut être extraite. Les messages et les faits inclus en contexte sont envoyés à OpenRouter puis au fournisseur du modèle. Mémoire locale : ${Prefs.getFacts(context).size} élément(s).",
+                        "L'écoute en arrière-plan nécessite une notification et envoie la voix au service de reconnaissance installé sur le téléphone. Les commandes de réglages et d'applications sont limitées par Android. Les messages IA sont transmis à OpenRouter et à son fournisseur. Une clé dans une APK peut être extraite. Mémoire locale : ${Prefs.getFacts(context).size} élément(s).",
                         color = Muted,
                         fontSize = 12.sp
                     )
@@ -366,6 +504,33 @@ private fun JarvisScreen() {
             dismissButton = {
                 TextButton(onClick = { showSettings = false }) {
                     Text("FERMER", color = Muted)
+                }
+            }
+        )
+    }
+
+    if (showWakeDisclosure) {
+        AlertDialog(
+            onDismissRequest = { showWakeDisclosure = false },
+            containerColor = Panel,
+            title = { Text("Écoute en arrière-plan", color = Ice) },
+            text = {
+                Text(
+                    "Jarvis garde une notification visible et utilise le microphone jusqu'à ce que tu désactives la veille. Android transmet la voix au service de reconnaissance installé sur le téléphone; il peut traiter aussi les paroles entendues avant « Jarvis ». Active ce mode seulement si tu l'acceptes. Android ou l'économie d'énergie peuvent interrompre l'écoute.",
+                    color = Muted,
+                    fontSize = 13.sp
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showWakeDisclosure = false
+                    Prefs.setWakeWordDisclosureConsent(context)
+                    requestWakeWordPermissions()
+                }) { Text("CONTINUER", color = Neon) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showWakeDisclosure = false }) {
+                    Text("ANNULER", color = Muted)
                 }
             }
         )
@@ -396,6 +561,7 @@ private fun JarvisOrb(
     listening: Boolean,
     speaking: Boolean,
     thinking: Boolean,
+    diameter: Dp,
     onClick: () -> Unit
 ) {
     val transition = rememberInfiniteTransition(label = "orb")
@@ -415,7 +581,7 @@ private fun JarvisOrb(
 
     Box(
         modifier = Modifier
-            .size(286.dp)
+            .size(diameter)
             .shadow(30.dp, CircleShape, ambientColor = glow.copy(alpha = 0.24f), spotColor = glow.copy(alpha = 0.25f))
             .clip(CircleShape)
             .background(Brush.radialGradient(listOf(glow.copy(alpha = 0.12f), Void.copy(alpha = 0.3f), Color.Transparent)))
@@ -469,7 +635,7 @@ private fun JarvisOrb(
             contentDescription = "Emblème Jarvis",
             contentScale = ContentScale.Crop,
             modifier = Modifier
-                .size(154.dp)
+                .size(diameter * 0.62f)
                 .clip(CircleShape)
                 .border(1.dp, Neon.copy(alpha = 0.52f), CircleShape)
         )

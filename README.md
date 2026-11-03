@@ -9,9 +9,11 @@ Jarvis est un assistant vocal Android en français, avec une interface sombre an
 3. Crée une clé API OpenRouter et entre-la dans Réglages.
 4. Appuie sur l'orbe pour parler, ou écris un message. L'orbe s'anime quand Jarvis écoute, réfléchit ou répond.
 
-Le microphone n'est demandé qu'au moment où tu utilises la commande vocale. Cette version ne demande pas l'autorisation d'accessibilité, l'accès aux notifications, aux contacts ou aux SMS. Elle ne reste pas à l'écoute en arrière-plan : il faut ouvrir l'application et appuyer sur l'orbe.
+Le mode « écoute Jarvis » est optionnel. Active-le dans l'application pour démarrer un service Android visible avec une notification persistante; dis « Jarvis », puis donne ta commande. Android peut suspendre ou arrêter le service selon le téléphone, son économie d'énergie et ses restrictions d'arrière-plan. Le service ne redémarre pas après un redémarrage du téléphone tant que tu ne relances pas Jarvis. La reconnaissance vocale est fournie par le service installé sur le téléphone et peut transmettre l'audio selon ses propres réglages et sa politique de confidentialité. Désactive l'écoute avec le bouton dans l'application ou la notification.
 
 Tu peux dire « Souviens-toi que … » pour enregistrer un fait localement, « Oublie … » pour supprimer un fait correspondant ou « Oublie tout » pour vider cette mémoire. L'historique et ces faits restent sur le téléphone; les messages utilisés pour répondre et les faits fournis en contexte sont envoyés à OpenRouter et au fournisseur du modèle sélectionné.
+
+Sans appel IA, Jarvis peut ouvrir des applications installées, ouvrir les réglages Android (notamment Wi-Fi et Bluetooth), régler le volume multimédia et demander à l'application Horloge de régler une alarme ou un minuteur. Depuis l'écoute en arrière-plan, Android bloque parfois l'ouverture d'autres applications : touche la notification Jarvis pour confirmer. Jarvis ne peut pas modifier les réglages protégés, envoyer des messages ou remplacer l'Assistant Google sans les autorisations et rôles système correspondants. « Assistant Google » fonctionne seulement si Android fournit une activité d'assistant disponible.
 
 ## OpenRouter, limites et données
 
