@@ -332,7 +332,8 @@ private fun JarvisScreen(
                         letterSpacing = 1.2.sp
                     )
                     Text(
-                        if (WakeWordState.active) WakeWordState.status else "Dis « Jarvis » en gardant la notification",
+                        if (WakeWordState.active) "Micro actif · ${WakeWordState.status}"
+                        else "Dis « Jarvis » en gardant la notification",
                         color = Muted,
                         fontSize = 11.sp
                     )
@@ -475,7 +476,7 @@ private fun JarvisScreen(
         AlertDialog(
             onDismissRequest = { showSettings = false },
             containerColor = Panel,
-            title = { Text("Connexion OpenRouter", color = Ice) },
+            title = { Text("Réglages Jarvis", color = Ice) },
             text = {
                 Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState())) {
                     Text(
@@ -510,8 +511,13 @@ private fun JarvisScreen(
                             Convo.error = "Les réglages vocaux Android ne sont pas disponibles sur ce téléphone."
                         }
                     }) {
-                        Text("CONFIGURER LA VOIX ANDROID", color = Neon)
+                        Text("CHOISIR LA VOIX DU TÉLÉPHONE", color = Neon)
                     }
+                    Text(
+                        "Dans les réglages Android, choisis une voix française masculine si elle est proposée par ton moteur vocal. Jarvis garde ce choix du téléphone; le réglage de tonalité ci-dessous la rend plus grave, sans garantir le genre ou l'accent.",
+                        color = Muted,
+                        fontSize = 12.sp
+                    )
                     Text("Tonalité ${"%.1f".format(java.util.Locale.FRANCE, Voice.pitch)}", color = Muted, fontSize = 12.sp)
                     Slider(
                         value = Voice.pitch,
@@ -524,7 +530,7 @@ private fun JarvisScreen(
                         Text("Effacer la conversation", color = Color(0xFFFF9E9E))
                     }
                     Text(
-                        "L'écoute en arrière-plan nécessite une notification et envoie la voix au service de reconnaissance installé sur le téléphone. Les commandes de réglages et d'applications sont limitées par Android. Les messages IA sont transmis à OpenRouter et à son fournisseur. Une clé dans une APK peut être extraite. Mémoire locale : ${Prefs.getFacts(context).size} élément(s).",
+                        "Veille = microphone actif, même avant « Jarvis ». Android privilégie la reconnaissance hors ligne si disponible; sinon son service vocal peut traiter les extraits. Les messages IA sont transmis à OpenRouter et à son fournisseur. Une clé dans une APK peut être extraite. Mémoire locale : ${Prefs.getFacts(context).size} élément(s).",
                         color = Muted,
                         fontSize = 12.sp
                     )

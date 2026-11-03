@@ -17,7 +17,7 @@ object Voice {
         private set
     var muted by mutableStateOf(false)
         private set
-    var pitch by mutableStateOf(0.9f)
+    var pitch by mutableStateOf(0.8f)
         private set
     private var tts: TextToSpeech? = null
     private var appContext: Context? = null

@@ -47,6 +47,8 @@ class WakeWordService : Service() {
     private var restartQueued = false
     private var pendingCommand: String? = null
     private var restartDelay = 600L
+    private var localRecognitionFailed = false
+    private var usingLocalRecognition = false
 
     override fun onCreate() {
         super.onCreate()
@@ -134,7 +136,15 @@ class WakeWordService : Service() {
                 stopSelf()
                 return
             }
-            recognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
+            val localRecognitionAvailable = !localRecognitionFailed &&
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                SpeechRecognizer.isOnDeviceRecognitionAvailable(this)
+            usingLocalRecognition = localRecognitionAvailable
+            recognizer = if (localRecognitionAvailable) {
+                SpeechRecognizer.createOnDeviceSpeechRecognizer(this)
+            } else {
+                SpeechRecognizer.createSpeechRecognizer(this)
+            }.apply {
                 setRecognitionListener(listener)
             }
         }
@@ -150,6 +160,7 @@ class WakeWordService : Service() {
                     putExtra(RecognizerIntent.EXTRA_LANGUAGE, "fr-FR")
                     putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
                     putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
                 }
                 speech.startListening(intent)
                 WakeWordState.listening = true
@@ -189,6 +200,14 @@ class WakeWordService : Service() {
                 Prefs.setWakeWordEnabled(this@WakeWordService, false)
                 stoppingByUser = true
                 stopSelf()
+                return
+            }
+            if (usingLocalRecognition && error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED) {
+                localRecognitionFailed = true
+                recognizer?.destroy()
+                recognizer = null
+                WakeWordState.status = "Mode hors ligne indisponible; utilisation du service vocal Android"
+                scheduleRestart(1_000)
                 return
             }
             if (error == SpeechRecognizer.ERROR_NETWORK ||
@@ -311,7 +330,7 @@ class WakeWordService : Service() {
         val status = if (pendingCommand != null) {
             "Touche pour ouvrir l'application demandée"
         } else {
-            "Écoute active — dis « Jarvis »; touche pour ouvrir"
+            "Micro actif — dis « Jarvis »; touche pour ouvrir"
         }
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.jarvis_logo)

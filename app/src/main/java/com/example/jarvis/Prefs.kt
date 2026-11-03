@@ -55,7 +55,7 @@ object Prefs {
     }
 
     fun getSpeechPitch(c: Context): Float =
-        try { sp(c).getFloat("speech_pitch", 0.9f).coerceIn(0.7f, 1.3f) } catch (_: Exception) { 0.9f }
+        try { sp(c).getFloat("speech_pitch", 0.8f).coerceIn(0.7f, 1.3f) } catch (_: Exception) { 0.8f }
 
     fun setSpeechPitch(c: Context, pitch: Float) {
         try { sp(c).edit().putFloat("speech_pitch", pitch.coerceIn(0.7f, 1.3f)).apply() } catch (_: Exception) {}
