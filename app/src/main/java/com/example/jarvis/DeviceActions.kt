@@ -5,6 +5,8 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
+import android.net.Uri
+import android.os.BatteryManager
 import android.provider.AlarmClock
 import android.provider.Settings
 import java.text.Normalizer
@@ -29,6 +31,30 @@ object DeviceActions {
         val audio = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
         when {
+            command.matches(Regex("^(quel est )?(le niveau|l etat|la charge) de la batterie$")) ||
+                command in setOf("batterie", "niveau batterie", "etat batterie", "charge batterie") -> {
+                val battery = ctx.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
+                val level = battery.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+                if (level !in 0..100) {
+                    return DeviceActionResult("Je ne peux pas lire le niveau de batterie sur ce téléphone.")
+                }
+                val chargeStatus = if (battery.isCharging) " et elle est en charge" else ""
+                return DeviceActionResult("La batterie est à $level pour cent$chargeStatus.")
+            }
+            command.startsWith("cherche sur internet ") ||
+                command.startsWith("recherche sur internet ") ||
+                command.startsWith("cherche sur le web ") ||
+                command.startsWith("recherche sur le web ") -> {
+                val query = command.substringAfter("internet ", "")
+                    .ifBlank { command.substringAfter("web ", "") }
+                    .trim()
+                if (query.isBlank()) return DeviceActionResult("Que souhaites-tu chercher sur le Web ?")
+                val searchIntent = Intent(
+                    Intent.ACTION_VIEW,
+                    Uri.parse("https://www.google.com/search?q=${Uri.encode(query)}")
+                )
+                return launch(ctx, allowActivityLaunch, text, searchIntent, "Je lance une recherche Web sur $query.")
+            }
             command.contains("quelle heure") ->
                 return DeviceActionResult(
                     "Il est " + LocalTime.now().format(DateTimeFormatter.ofPattern("H 'heures' mm", Locale.FRENCH)) + "."
@@ -89,6 +115,14 @@ object DeviceActions {
         )
             .find(command)?.groupValues?.get(1)?.trim()
         if (appName != null) {
+            if (appName in setOf("youtube", "you tube")) {
+                val youtubeIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com"))
+                return launch(ctx, allowActivityLaunch, text, youtubeIntent, "J'ouvre YouTube.")
+            }
+            if (appName in setOf("google", "google chrome")) {
+                val googleIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com"))
+                return launch(ctx, allowActivityLaunch, text, googleIntent, "J'ouvre Google.")
+            }
             val knownAssistant = appName in setOf("assistant google", "google assistant")
             if (knownAssistant) {
                 val assistantIntent = Intent(Intent.ACTION_VOICE_COMMAND)

@@ -75,6 +75,8 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -84,12 +86,12 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 
-private val Void = Color(0xFF050A10)
-private val DeepTeal = Color(0xFF071921)
-private val Neon = Color(0xFF48F0D0)
-private val Ice = Color(0xFFB7FFF2)
-private val Muted = Color(0xFF8BA4AB)
-private val Panel = Color(0xFF101D25)
+private val Void = Color(0xFF070914)
+private val DeepTeal = Color(0xFF10132B)
+private val Neon = Color(0xFF9184FF)
+private val Ice = Color(0xFFE6E8FF)
+private val Muted = Color(0xFF9AA0C3)
+private val Panel = Color(0xFF151A35)
 
 class MainActivity : ComponentActivity() {
     private var pendingDeviceAction by mutableStateOf<String?>(null)
@@ -99,8 +101,8 @@ class MainActivity : ComponentActivity() {
         Voice.init(this)
         Prefs.migrateApiKeys(this)
         Convo.restore(this)
-        window.statusBarColor = android.graphics.Color.rgb(5, 10, 16)
-        window.navigationBarColor = android.graphics.Color.rgb(5, 10, 16)
+        window.statusBarColor = android.graphics.Color.rgb(7, 9, 20)
+        window.navigationBarColor = android.graphics.Color.rgb(7, 9, 20)
         pendingDeviceAction = intent?.getStringExtra(WakeWordService.EXTRA_PENDING_ACTION)
         setContent {
             MaterialTheme {
@@ -205,6 +207,19 @@ private fun JarvisScreen(
     ) { granted ->
         if (granted) startRecognition(speechLauncher) { listening = it }
         else Convo.error = "Autorise le microphone pour parler à Jarvis."
+    }
+    fun requestVoiceInput() {
+        if (listening || Convo.loading) return
+        if (Voice.speaking) Voice.stop()
+        if (WakeWordState.active) {
+            WakeWordService.requestCommand(context)
+        } else if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            startRecognition(speechLauncher) { listening = it }
+        } else {
+            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
     }
     val ttsSettingsLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -332,8 +347,8 @@ private fun JarvisScreen(
                         letterSpacing = 1.2.sp
                     )
                     Text(
-                        if (WakeWordState.active) "Micro actif · ${WakeWordState.status}"
-                        else "Dis « Jarvis » en gardant la notification",
+                        if (WakeWordState.active) "Veille active · dis « Jarvis »"
+                        else "Active la veille ou touche le micro pour parler",
                         color = Muted,
                         fontSize = 11.sp
                     )
@@ -353,20 +368,7 @@ private fun JarvisScreen(
                     speaking = Voice.speaking,
                     thinking = Convo.loading,
                     diameter = maxHeight.coerceIn(150.dp, 250.dp),
-                    onClick = {
-                        if (!listening && !Convo.loading) {
-                            if (Voice.speaking) Voice.stop()
-                            if (WakeWordState.active) {
-                                WakeWordService.requestCommand(context)
-                            } else if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
-                                android.content.pm.PackageManager.PERMISSION_GRANTED
-                            ) {
-                                startRecognition(speechLauncher) { listening = it }
-                            } else {
-                                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                            }
-                        }
-                    }
+                    onClick = { requestVoiceInput() }
                 )
             }
 
@@ -374,9 +376,9 @@ private fun JarvisScreen(
                 when {
                     Convo.loading -> "JE RÉFLÉCHIS"
                     Voice.speaking -> "JE TE RÉPONDS"
-                    listening || (WakeWordState.active && WakeWordState.listening) -> "JE T'ÉCOUTE"
-                    WakeWordState.active -> "DIS « JARVIS » OU TOUCHE L'ORB"
-                    else -> "TOUCHE L'ORB POUR PARLER"
+                    listening -> "JE T'ÉCOUTE"
+                    WakeWordState.active -> "VEILLE ACTIVE · DIS « JARVIS »"
+                    else -> "TOUCHE L'ORB OU LE MICRO POUR PARLER"
                 },
                 color = if (listening || Voice.speaking || Convo.loading) Neon else Muted,
                 fontSize = 11.sp,
@@ -450,6 +452,24 @@ private fun JarvisScreen(
                     )
                 )
                 Spacer(Modifier.width(10.dp))
+                Button(
+                    onClick = { requestVoiceInput() },
+                    enabled = !listening && !Convo.loading,
+                    shape = CircleShape,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Panel,
+                        contentColor = Neon,
+                        disabledContainerColor = Panel.copy(alpha = 0.55f),
+                        disabledContentColor = Muted
+                    ),
+                    modifier = Modifier
+                        .size(48.dp)
+                        .semantics { contentDescription = "Parler avec le microphone" },
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                ) {
+                    MicGlyph()
+                }
+                Spacer(Modifier.width(8.dp))
                 Button(
                     onClick = {
                         send(input)
@@ -702,7 +722,7 @@ private fun JarvisOrb(
             rotation.snapTo(0f)
         }
     }
-    val glow = if (active) Neon else Color(0xFF19AAB1)
+    val glow = if (active) Neon else Color(0xFF5C67D8)
 
     Box(
         modifier = Modifier
@@ -768,6 +788,46 @@ private fun JarvisOrb(
 }
 
 @Composable
+private fun MicGlyph() {
+    Canvas(Modifier.size(19.dp)) {
+        val stroke = 1.8.dp.toPx()
+        val micWidth = size.width * 0.34f
+        val micLeft = (size.width - micWidth) / 2f
+        val micTop = size.height * 0.08f
+        val micHeight = size.height * 0.54f
+        drawRoundRect(
+            color = Neon,
+            topLeft = androidx.compose.ui.geometry.Offset(micLeft, micTop),
+            size = androidx.compose.ui.geometry.Size(micWidth, micHeight),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(micWidth / 2f)
+        )
+        drawArc(
+            color = Neon,
+            startAngle = 0f,
+            sweepAngle = 180f,
+            useCenter = false,
+            topLeft = androidx.compose.ui.geometry.Offset(size.width * 0.22f, size.height * 0.28f),
+            size = androidx.compose.ui.geometry.Size(size.width * 0.56f, size.height * 0.5f),
+            style = Stroke(width = stroke, cap = StrokeCap.Round)
+        )
+        drawLine(
+            Neon,
+            androidx.compose.ui.geometry.Offset(size.width / 2f, size.height * 0.76f),
+            androidx.compose.ui.geometry.Offset(size.width / 2f, size.height * 0.92f),
+            stroke,
+            cap = StrokeCap.Round
+        )
+        drawLine(
+            Neon,
+            androidx.compose.ui.geometry.Offset(size.width * 0.34f, size.height * 0.92f),
+            androidx.compose.ui.geometry.Offset(size.width * 0.66f, size.height * 0.92f),
+            stroke,
+            cap = StrokeCap.Round
+        )
+    }
+}
+
+@Composable
 private fun MessageCard(message: Msg) {
     val user = message.role == "user"
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (user) Arrangement.End else Arrangement.Start) {
@@ -775,7 +835,7 @@ private fun MessageCard(message: Msg) {
             Modifier
                 .fillMaxWidth(0.88f)
                 .clip(RoundedCornerShape(18.dp))
-                .background(if (user) Color(0xFF103A40) else Panel.copy(alpha = 0.9f))
+                .background(if (user) Color(0xFF25244E) else Panel.copy(alpha = 0.9f))
                 .border(
                     1.dp,
                     if (user) Neon.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.055f),
