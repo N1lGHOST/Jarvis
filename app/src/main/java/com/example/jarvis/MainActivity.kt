@@ -6,7 +6,6 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
 import android.speech.RecognizerIntent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -504,7 +503,7 @@ private fun JarvisScreen(
                     )
                     Spacer(Modifier.height(8.dp))
                     TextButton(onClick = {
-                        val intent = Intent(Settings.ACTION_TEXT_TO_SPEECH_SETTINGS)
+                        val intent = Intent("com.android.settings.TTS_SETTINGS")
                         if (intent.resolveActivity(context.packageManager) != null) {
                             ttsSettingsLauncher.launch(intent)
                         } else {
