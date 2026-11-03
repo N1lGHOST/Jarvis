@@ -87,7 +87,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Voice.init(this)
-        Prefs.migrateFromClaude(this)
+        Prefs.migrateApiKeys(this)
         Convo.restore(this)
         window.statusBarColor = android.graphics.Color.rgb(5, 10, 16)
         window.navigationBarColor = android.graphics.Color.rgb(5, 10, 16)
@@ -106,7 +106,7 @@ private fun JarvisScreen() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
-    var apiKey by remember { mutableStateOf(Prefs.getGeminiKey(context)) }
+    var apiKey by remember { mutableStateOf(Prefs.getOpenRouterKey(context)) }
     var showSettings by remember { mutableStateOf(apiKey.isBlank()) }
     var listening by remember { mutableStateOf(false) }
     var input by remember { mutableStateOf("") }
@@ -319,11 +319,11 @@ private fun JarvisScreen() {
         AlertDialog(
             onDismissRequest = { showSettings = false },
             containerColor = Panel,
-            title = { Text("Connexion Gemini", color = Ice) },
+            title = { Text("Connexion OpenRouter", color = Ice) },
             text = {
                 Column {
                     Text(
-                        "Ta clé reste enregistrée sur cet appareil. Gemini peut appliquer des limites ou des frais selon ton compte et ton usage.",
+                        "Jarvis utilise le routeur openrouter/free. Limites actuelles : 20 requêtes/minute et 50/jour. Le modèle disponible, l'accès régional et les règles de données dépendent d'OpenRouter et du fournisseur choisi. Vérifie ton compte et ses limites avant usage; aucune disponibilité gratuite n'est garantie.",
                         color = Muted,
                         fontSize = 13.sp
                     )
@@ -332,8 +332,8 @@ private fun JarvisScreen() {
                         value = draft,
                         onValueChange = { draft = it },
                         singleLine = true,
-                        label = { Text("Clé API Gemini") },
-                        placeholder = { Text("AIza…") },
+                        label = { Text("Clé API OpenRouter") },
+                        placeholder = { Text("sk-or-v1-…") },
                         visualTransformation = PasswordVisualTransformation(),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = Ice,
@@ -350,7 +350,7 @@ private fun JarvisScreen() {
                         Text("Effacer la conversation", color = Color(0xFFFF9E9E))
                     }
                     Text(
-                        "Mémoire locale : ${Prefs.getFacts(context).size} élément(s). Les faits ne sont enregistrés que si tu demandes explicitement à Jarvis de s’en souvenir.",
+                        "La clé est conservée chiffrée sur ce téléphone, mais une clé utilisée dans une APK peut être extraite. Les messages et les faits inclus en contexte sont envoyés à OpenRouter puis au fournisseur du modèle. Mémoire locale : ${Prefs.getFacts(context).size} élément(s).",
                         color = Muted,
                         fontSize = 12.sp
                     )
@@ -359,7 +359,7 @@ private fun JarvisScreen() {
             confirmButton = {
                 TextButton(onClick = {
                     apiKey = draft.trim()
-                    Prefs.setGeminiKey(context, apiKey)
+                    Prefs.setOpenRouterKey(context, apiKey)
                     showSettings = false
                 }) { Text("ENREGISTRER", color = Neon) }
             },

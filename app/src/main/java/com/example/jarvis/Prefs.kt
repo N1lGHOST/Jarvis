@@ -20,23 +20,24 @@ object Prefs {
             ).also { cached = it }
         }
 
-    fun migrateFromClaude(c: Context) {
+    fun migrateApiKeys(c: Context) {
         try {
             val preferences = sp(c)
-            if (!preferences.getBoolean("gemini_key_migrated", false)) {
+            if (!preferences.getBoolean("openrouter_key_migrated", false)) {
                 preferences.edit()
                     .remove("api_key")
-                    .putBoolean("gemini_key_migrated", true)
+                    .remove("gemini_api_key")
+                    .putBoolean("openrouter_key_migrated", true)
                     .apply()
             }
         } catch (_: Exception) {}
     }
 
-    fun getGeminiKey(c: Context): String =
-        try { sp(c).getString("gemini_api_key", "") ?: "" } catch (e: Exception) { "" }
+    fun getOpenRouterKey(c: Context): String =
+        try { sp(c).getString("openrouter_api_key", "") ?: "" } catch (e: Exception) { "" }
 
-    fun setGeminiKey(c: Context, key: String) {
-        try { sp(c).edit().putString("gemini_api_key", key).apply() } catch (_: Exception) {}
+    fun setOpenRouterKey(c: Context, key: String) {
+        try { sp(c).edit().putString("openrouter_api_key", key).apply() } catch (_: Exception) {}
     }
 
     fun getFacts(c: Context): List<String> = try {

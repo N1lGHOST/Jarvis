@@ -29,7 +29,7 @@ jobs:
           tag_name: jarvis-apk-${{ env.VC }}-${{ github.run_attempt }}
           name: Jarvis APK build ${{ github.run_number }}
           body: |
-            APK Jarvis Gemini de test compilé depuis `${{ github.ref_name }}`.
+            APK Jarvis de test avec le routeur OpenRouter `openrouter/free`, compilé depuis `${{ github.ref_name }}`.
 
             Cette version de test utilise une clé de débogage GitHub temporaire. Elle est installable, mais n'est pas destinée au Play Store; désinstalle une version précédente si Android refuse l'installation à cause de sa signature.
           prerelease: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master' }}

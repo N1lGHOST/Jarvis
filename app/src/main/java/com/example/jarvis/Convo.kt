@@ -40,7 +40,7 @@ object Convo {
         val history = messages.takeLast(20).dropWhile { it.role != "user" }
         return try {
             val answer = withContext(Dispatchers.IO) {
-                GeminiClient.ask(apiKey, history, Prefs.getFacts(app))
+                OpenRouterClient.ask(apiKey, history, Prefs.getFacts(app))
             }
             messages.add(Msg("assistant", answer))
             persist(app)
