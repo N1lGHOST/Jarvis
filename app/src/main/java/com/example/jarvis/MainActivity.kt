@@ -22,6 +22,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -31,6 +32,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -71,6 +73,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -383,15 +386,81 @@ private fun JarvisScreen(
                         textAlign = TextAlign.Center,
                         modifier = Modifier.padding(top = 3.dp)
                     )
-                    Box(
-                        Modifier.fillMaxWidth().height(188.dp),
-                        contentAlignment = Alignment.Center
+                    BoxWithConstraints(
+                        Modifier.fillMaxWidth().height(260.dp)
                     ) {
+                        val orbitX = (maxWidth / 2 - 114.dp).coerceAtLeast(18.dp)
+                        val satelliteOffset = Modifier.width(72.dp)
+                        Canvas(Modifier.fillMaxSize()) {
+                            val centerX = size.width / 2
+                            val centerY = size.height / 2
+                            val x = orbitX.toPx() + 36.dp.toPx()
+                            val y = 29.dp.toPx()
+                            val targets = listOf(
+                                androidx.compose.ui.geometry.Offset(x, y),
+                                androidx.compose.ui.geometry.Offset(size.width - x, y),
+                                androidx.compose.ui.geometry.Offset(x, size.height - y - 10.dp.toPx()),
+                                androidx.compose.ui.geometry.Offset(
+                                    size.width - x,
+                                    size.height - y - 10.dp.toPx()
+                                )
+                            )
+                            targets.forEach { target ->
+                                drawLine(
+                                    color = Neon.copy(alpha = 0.22f),
+                                    start = androidx.compose.ui.geometry.Offset(centerX, centerY),
+                                    end = target,
+                                    strokeWidth = 1.dp.toPx(),
+                                    cap = StrokeCap.Round
+                                )
+                                drawCircle(
+                                    color = Cyan.copy(alpha = 0.42f),
+                                    radius = 2.dp.toPx(),
+                                    center = target
+                                )
+                            }
+                        }
+                        OrbitNode(
+                            label = "STOCK",
+                            mark = "ST",
+                            accent = Lavender,
+                            modifier = satelliteOffset
+                                .align(Alignment.TopStart)
+                                .offset(x = orbitX, y = 10.dp)
+                        ) {
+                            inventory = Prefs.getInventory(context)
+                            showInventory = true
+                        }
+                        OrbitNode(
+                            label = "BATTERIE",
+                            mark = "%",
+                            accent = Cyan,
+                            modifier = satelliteOffset
+                                .align(Alignment.TopEnd)
+                                .offset(x = -orbitX, y = 10.dp)
+                        ) { send("quel est le niveau de ma batterie") }
+                        OrbitNode(
+                            label = "RECHERCHE",
+                            mark = "WEB",
+                            accent = Neon,
+                            modifier = satelliteOffset
+                                .align(Alignment.BottomStart)
+                                .offset(x = orbitX, y = (-10).dp)
+                        ) { showWebSearch = true }
+                        OrbitNode(
+                            label = "MINUTEUR",
+                            mark = "5′",
+                            accent = Color(0xFFFFB978),
+                            modifier = satelliteOffset
+                                .align(Alignment.BottomEnd)
+                                .offset(x = -orbitX, y = (-10).dp)
+                        ) { send("mets un minuteur de 5 minutes") }
                         JarvisOrb(
                             listening = listening,
                             speaking = Voice.speaking,
                             thinking = Convo.loading,
-                            diameter = 160.dp,
+                            diameter = 138.dp,
+                            modifier = Modifier.align(Alignment.Center),
                             onClick = {
                                 if (!listening && !Convo.loading) {
                                     if (Voice.speaking) Voice.stop()
@@ -423,49 +492,6 @@ private fun JarvisScreen(
                         modifier = Modifier.fillMaxWidth(),
                         textAlign = TextAlign.Center
                     )
-                }
-
-                Row(
-                    Modifier.fillMaxWidth().padding(top = 20.dp, bottom = 9.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("ACTIONS RAPIDES", color = Ice, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.2.sp)
-                    Text("SUR CET APPAREIL", color = Muted, fontSize = 8.sp, letterSpacing = 1.sp)
-                }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    QuickActionCard(
-                        title = "Mon stock",
-                        detail = "Articles & quantités",
-                        accent = Lavender,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        inventory = Prefs.getInventory(context)
-                        showInventory = true
-                    }
-                    QuickActionCard(
-                        title = "Batterie",
-                        detail = "Niveau actuel",
-                        accent = Cyan,
-                        modifier = Modifier.weight(1f)
-                    ) { send("quel est le niveau de ma batterie") }
-                }
-                Row(
-                    Modifier.fillMaxWidth().padding(top = 10.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    QuickActionCard(
-                        title = "Recherche Web",
-                        detail = "Sur demande",
-                        accent = Neon,
-                        modifier = Modifier.weight(1f)
-                    ) { showWebSearch = true }
-                    QuickActionCard(
-                        title = "Minuteur",
-                        detail = "5 minutes",
-                        accent = Color(0xFFFFB978),
-                        modifier = Modifier.weight(1f)
-                    ) { send("mets un minuteur de 5 minutes") }
                 }
 
                 Row(
@@ -952,6 +978,7 @@ private fun JarvisOrb(
     speaking: Boolean,
     thinking: Boolean,
     diameter: Dp,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     val active = listening || speaking || thinking
@@ -976,6 +1003,7 @@ private fun JarvisOrb(
     Box(
         modifier = Modifier
             .size(diameter)
+            .then(modifier)
             .shadow(30.dp, CircleShape, ambientColor = glow.copy(alpha = 0.24f), spotColor = glow.copy(alpha = 0.25f))
             .clip(CircleShape)
             .background(Brush.radialGradient(listOf(glow.copy(alpha = 0.12f), Void.copy(alpha = 0.3f), Color.Transparent)))
@@ -1037,33 +1065,33 @@ private fun JarvisOrb(
 }
 
 @Composable
-private fun QuickActionCard(
-    title: String,
-    detail: String,
+private fun OrbitNode(
+    label: String,
+    mark: String,
     accent: Color,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     Column(
         modifier
-            .clip(RoundedCornerShape(18.dp))
-            .background(Panel.copy(alpha = 0.9f))
-            .border(1.dp, accent.copy(alpha = 0.2f), RoundedCornerShape(18.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 13.dp, vertical = 12.dp),
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(3.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         Box(
             Modifier
-                .size(26.dp)
-                .clip(RoundedCornerShape(9.dp))
-                .background(accent.copy(alpha = 0.14f)),
+                .size(40.dp)
+                .shadow(9.dp, CircleShape, ambientColor = accent.copy(alpha = 0.14f))
+                .clip(CircleShape)
+                .background(Panel)
+                .border(1.dp, accent.copy(alpha = 0.68f), CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Text(title.take(1).uppercase(), color = accent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text(mark, color = accent, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.3.sp)
         }
-        Text(title, color = Ice, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-        Text(detail, color = Muted, fontSize = 10.sp, lineHeight = 14.sp)
+        Text(label, color = Ice.copy(alpha = 0.9f), fontSize = 8.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.4.sp)
     }
 }
 
