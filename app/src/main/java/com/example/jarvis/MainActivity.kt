@@ -756,7 +756,7 @@ private fun JarvisScreen(
                         Text("Effacer la conversation", color = Color(0xFFFF9E9E))
                     }
                     Text(
-                        "Veille = microphone actif, même avant « Jarvis ». Android privilégie la reconnaissance hors ligne si disponible; sinon son service vocal peut traiter les extraits. Les requêtes IA et les échanges récents sont transmis à Gemini ou OpenRouter. Une clé dans une APK peut être extraite. Mémoire locale : ${Prefs.getFacts(context).size} élément(s).",
+                        "Veille = microphone actif, même avant « Jarvis ». La détection utilise la reconnaissance française hors ligne si elle est disponible; sinon la veille s'arrête sans envoyer l'audio à un service vocal en ligne. Les requêtes IA et les échanges récents sont transmis au fournisseur choisi. Une clé dans une APK peut être extraite. Mémoire locale : ${Prefs.getFacts(context).size} élément(s).",
                         color = Muted,
                         fontSize = 12.sp
                     )
@@ -932,7 +932,7 @@ private fun JarvisScreen(
             title = { Text("Écoute en arrière-plan", color = Ice) },
             text = {
                 Text(
-                    "Jarvis garde une notification visible et utilise le microphone jusqu'à ce que tu désactives la veille. Android transmet la voix au service de reconnaissance installé sur le téléphone; il peut traiter aussi les paroles entendues avant « Jarvis ». Active ce mode seulement si tu l'acceptes. Android ou l'économie d'énergie peuvent interrompre l'écoute.",
+                    "Jarvis garde une notification visible et utilise le microphone jusqu'à ce que tu désactives la veille. La reconnaissance essaie de fonctionner entièrement hors ligne et entend aussi les paroles avant « Jarvis » pour détecter le mot de réveil. Si la reconnaissance hors ligne en français n'est pas disponible, la veille s'arrête au lieu d'envoyer les extraits audio en ligne. Active ce mode seulement si tu l'acceptes. Android ou l'économie d'énergie peuvent interrompre l'écoute.",
                     color = Muted,
                     fontSize = 13.sp
                 )

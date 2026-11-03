@@ -47,8 +47,7 @@ class WakeWordService : Service() {
     private var restartQueued = false
     private var pendingCommand: String? = null
     private var restartDelay = 600L
-    private var localRecognitionFailed = false
-    private var usingLocalRecognition = false
+    private var finalStatus: String? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -91,6 +90,16 @@ class WakeWordService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+        val localRecognitionAvailable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            SpeechRecognizer.isOnDeviceRecognitionAvailable(this)
+        if (!localRecognitionAvailable) {
+            finalStatus = "Veille indisponible : reconnaissance française hors ligne requise"
+            WakeWordState.status = finalStatus.orEmpty()
+            Prefs.setWakeWordEnabled(this, false)
+            stoppingByUser = true
+            stopSelf()
+            return START_NOT_STICKY
+        }
         if (WakeWordState.active && intent?.action == ACTION_START) return START_STICKY
 
         val notification = buildNotification()
@@ -118,10 +127,10 @@ class WakeWordService : Service() {
         main.removeCallbacksAndMessages(null)
         WakeWordState.active = false
         WakeWordState.listening = false
-        if (stoppingByUser) {
+        if (stoppingByUser && finalStatus == null) {
             WakeWordState.status = "Désactivé"
         } else {
-            WakeWordState.status = "Écoute suspendue"
+            WakeWordState.status = finalStatus ?: "Écoute suspendue"
         }
         super.onDestroy()
     }
@@ -130,21 +139,14 @@ class WakeWordService : Service() {
         if (isSpeaking) return
         if (recognizer == null) {
             if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-                WakeWordState.status = "Reconnaissance vocale indisponible sur ce téléphone"
+                finalStatus = "Reconnaissance vocale indisponible sur ce téléphone"
+                WakeWordState.status = finalStatus.orEmpty()
                 Prefs.setWakeWordEnabled(this, false)
                 stoppingByUser = true
                 stopSelf()
                 return
             }
-            val localRecognitionAvailable = !localRecognitionFailed &&
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                SpeechRecognizer.isOnDeviceRecognitionAvailable(this)
-            usingLocalRecognition = localRecognitionAvailable
-            recognizer = if (localRecognitionAvailable) {
-                SpeechRecognizer.createOnDeviceSpeechRecognizer(this)
-            } else {
-                SpeechRecognizer.createSpeechRecognizer(this)
-            }.apply {
+            recognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(this).apply {
                 setRecognitionListener(listener)
             }
         }
@@ -202,12 +204,12 @@ class WakeWordService : Service() {
                 stopSelf()
                 return
             }
-            if (usingLocalRecognition && error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED) {
-                localRecognitionFailed = true
-                recognizer?.destroy()
-                recognizer = null
-                WakeWordState.status = "Mode hors ligne indisponible; utilisation du service vocal Android"
-                scheduleRestart(1_000)
+            if (error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED) {
+                finalStatus = "Veille indisponible : le français hors ligne n'est pas pris en charge"
+                WakeWordState.status = finalStatus.orEmpty()
+                Prefs.setWakeWordEnabled(this@WakeWordService, false)
+                stoppingByUser = true
+                stopListeningAndService()
                 return
             }
             if (error == SpeechRecognizer.ERROR_NETWORK ||
@@ -266,10 +268,21 @@ class WakeWordService : Service() {
     }
 
     private fun runCommand(text: String) {
-        val apiKey = Prefs.getOpenRouterKey(this)
+        val provider = Prefs.getAiProvider(this)
+        val apiKey = if (provider == "gemini") {
+            Prefs.getGeminiKey(this)
+        } else {
+            Prefs.getOpenRouterKey(this)
+        }
         serviceScope.launch {
             WakeWordState.status = "Je m'en occupe…"
-            val answer = Convo.ask(this@WakeWordService, apiKey, text, allowActivityLaunch = false)
+            val answer = Convo.ask(
+                this@WakeWordService,
+                apiKey,
+                text,
+                allowActivityLaunch = false,
+                aiProvider = provider
+            )
             pendingCommand = DeviceActions.takePendingCommand()
             if (pendingCommand != null) {
                 notificationManager().notify(NOTIFICATION_ID, buildNotification())
@@ -351,7 +364,7 @@ class WakeWordService : Service() {
                 "Écoute Jarvis",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Indique que Jarvis attend son mot d'activation."
+                description = "Indique que Jarvis attend son mot d'activation avec la reconnaissance hors ligne."
             }
             notificationManager().createNotificationChannel(channel)
         }
