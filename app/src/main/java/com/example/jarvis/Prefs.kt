@@ -54,6 +54,20 @@ object Prefs {
         try { sp(c).edit().putBoolean("wake_word_disclosure_consent", true).apply() } catch (_: Exception) {}
     }
 
+    fun getSpeechPitch(c: Context): Float =
+        try { sp(c).getFloat("speech_pitch", 0.9f).coerceIn(0.7f, 1.3f) } catch (_: Exception) { 0.9f }
+
+    fun setSpeechPitch(c: Context, pitch: Float) {
+        try { sp(c).edit().putFloat("speech_pitch", pitch.coerceIn(0.7f, 1.3f)).apply() } catch (_: Exception) {}
+    }
+
+    fun isSpeechMuted(c: Context): Boolean =
+        try { sp(c).getBoolean("speech_muted", false) } catch (_: Exception) { false }
+
+    fun setSpeechMuted(c: Context, muted: Boolean) {
+        try { sp(c).edit().putBoolean("speech_muted", muted).apply() } catch (_: Exception) {}
+    }
+
     fun getFacts(c: Context): List<String> = try {
         val arr = JSONArray(sp(c).getString("facts", "[]"))
         List(arr.length()) { arr.getString(it) }

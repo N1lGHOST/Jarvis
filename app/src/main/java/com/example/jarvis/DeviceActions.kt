@@ -8,6 +8,9 @@ import android.media.AudioManager
 import android.provider.AlarmClock
 import android.provider.Settings
 import java.text.Normalizer
+import java.time.LocalDate
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 data class DeviceActionResult(
@@ -26,6 +29,17 @@ object DeviceActions {
         val audio = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
         when {
+            command.contains("quelle heure") ->
+                return DeviceActionResult(
+                    "Il est " + LocalTime.now().format(DateTimeFormatter.ofPattern("H 'heures' mm", Locale.FRENCH)) + "."
+                )
+            command.contains("quelle date") || command.startsWith("quel jour") ||
+                command.startsWith("on est quel jour") ->
+                return DeviceActionResult(
+                    "Nous sommes le " + LocalDate.now().format(
+                        DateTimeFormatter.ofPattern("EEEE d MMMM yyyy", Locale.FRENCH)
+                    ) + "."
+                )
             command.matches(Regex("^(monte|augmente) (le )?(son|volume)(.*)$")) -> {
                 audio.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE, AudioManager.FLAG_SHOW_UI)
                 return DeviceActionResult("Je monte le volume.")
@@ -49,7 +63,7 @@ object DeviceActions {
                 )
                 return DeviceActionResult("Le volume est réglé à $percent pour cent.")
             }
-            command.matches(Regex("^(coupe|coupe-moi|mets) (le )?(son|volume) (en sourdine|au minimum|a zero)$")) -> {
+            command.matches(Regex("^(coupe (le )?(son|volume)|mets (le )?(son|volume) (en sourdine|au minimum|a zero))$")) -> {
                 audio.setStreamVolume(AudioManager.STREAM_MUSIC, 0, AudioManager.FLAG_SHOW_UI)
                 return DeviceActionResult("Le volume multimédia est coupé.")
             }

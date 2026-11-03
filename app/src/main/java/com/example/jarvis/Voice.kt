@@ -15,7 +15,12 @@ import java.util.UUID
 object Voice {
     var speaking by mutableStateOf(false)
         private set
+    var muted by mutableStateOf(false)
+        private set
+    var pitch by mutableStateOf(0.9f)
+        private set
     private var tts: TextToSpeech? = null
+    private var appContext: Context? = null
     private var ready = false
     private var failed = false
     private var pending: Pair<String, (() -> Unit)?>? = null
@@ -24,22 +29,31 @@ object Voice {
 
     fun init(ctx: Context) {
         if (tts != null) return
+        appContext = ctx.applicationContext
+        muted = Prefs.isSpeechMuted(ctx)
+        pitch = Prefs.getSpeechPitch(ctx)
         tts = TextToSpeech(ctx.applicationContext) { status ->
             if (status == TextToSpeech.SUCCESS) {
-                tts?.language = Locale.FRENCH
-                tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                    override fun onStart(id: String?) { main.post { speaking = true } }
-                    override fun onDone(id: String?) { finish(id) }
-                    @Deprecated("Deprecated in Java")
-                    override fun onError(id: String?) { finish(id) }
-                    override fun onStop(id: String?, interrupted: Boolean) { finish(id) }
-                })
-                ready = true
+                main.post {
+                    val engine = tts ?: return@post
+                    engine.language = Locale.FRENCH
+                    engine.setPitch(pitch)
+                    engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                        override fun onStart(id: String?) { main.post { speaking = true } }
+                        override fun onDone(id: String?) { finish(id) }
+                        @Deprecated("Deprecated in Java")
+                        override fun onError(id: String?) { finish(id) }
+                        override fun onStop(id: String?, interrupted: Boolean) { finish(id) }
+                    })
+                    ready = true
+                    pending?.let { speak(it.first, it.second) }
+                    pending = null
+                }
             } else {
                 failed = true
+                pending?.second?.let { main.post(it) }
+                pending = null
             }
-            pending?.let { speak(it.first, it.second) }
-            pending = null
         }
     }
 
@@ -52,6 +66,7 @@ object Voice {
     }
 
     fun speak(text: String, onDone: (() -> Unit)? = null) {
+        if (muted) { onDone?.let { main.post(it) }; return }
         if (failed) { onDone?.let { main.post(it) }; return }
         if (!ready) { pending = text to onDone; return }
         val id = UUID.randomUUID().toString()
@@ -64,5 +79,26 @@ object Voice {
         speaking = false
         pending = null
         synchronized(callbacks) { callbacks.clear() }
+    }
+
+    fun reload(ctx: Context) {
+        stop()
+        tts?.shutdown()
+        tts = null
+        ready = false
+        failed = false
+        init(ctx)
+    }
+
+    fun setPitch(value: Float) {
+        pitch = value.coerceIn(0.7f, 1.3f)
+        tts?.setPitch(pitch)
+        appContext?.let { Prefs.setSpeechPitch(it, pitch) }
+    }
+
+    fun setMuted(value: Boolean) {
+        muted = value
+        appContext?.let { Prefs.setSpeechMuted(it, value) }
+        if (value) stop()
     }
 }

@@ -6,6 +6,7 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.speech.RecognizerIntent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -31,6 +32,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -43,6 +45,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -50,6 +54,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -202,6 +207,11 @@ private fun JarvisScreen(
         if (granted) startRecognition(speechLauncher) { listening = it }
         else Convo.error = "Autorise le microphone pour parler à Jarvis."
     }
+    val ttsSettingsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        Voice.reload(context)
+    }
 
     LaunchedEffect(Unit) {
         if (Prefs.isWakeWordEnabled(context) &&
@@ -279,8 +289,17 @@ private fun JarvisScreen(
                         )
                     }
                 }
-                TextButton(onClick = { showSettings = true }) {
-                    Text("RÉGLAGES", color = Neon, fontSize = 11.sp, letterSpacing = 1.sp)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { Voice.setMuted(!Voice.muted) }) {
+                        Text(
+                            if (Voice.muted) "MUET" else "SON",
+                            color = if (Voice.muted) Muted else Neon,
+                            fontSize = 10.sp
+                        )
+                    }
+                    TextButton(onClick = { showSettings = true }) {
+                        Text("RÉGLAGES", color = Neon, fontSize = 11.sp, letterSpacing = 1.sp)
+                    }
                 }
             }
 
@@ -459,7 +478,7 @@ private fun JarvisScreen(
             containerColor = Panel,
             title = { Text("Connexion OpenRouter", color = Ice) },
             text = {
-                Column {
+                Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState())) {
                     Text(
                         "Réponses IA via openrouter/free : limites et disponibilité varient selon le compte et le modèle. Vérifie les conditions dans OpenRouter; aucun service gratuit n'est garanti.",
                         color = Muted,
@@ -482,6 +501,24 @@ private fun JarvisScreen(
                             unfocusedLabelColor = Muted,
                             cursorColor = Neon
                         )
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(onClick = {
+                        val intent = Intent(Settings.ACTION_TEXT_TO_SPEECH_SETTINGS)
+                        if (intent.resolveActivity(context.packageManager) != null) {
+                            ttsSettingsLauncher.launch(intent)
+                        } else {
+                            Convo.error = "Les réglages vocaux Android ne sont pas disponibles sur ce téléphone."
+                        }
+                    }) {
+                        Text("CONFIGURER LA VOIX ANDROID", color = Neon)
+                    }
+                    Text("Tonalité ${"%.1f".format(java.util.Locale.FRANCE, Voice.pitch)}", color = Muted, fontSize = 12.sp)
+                    Slider(
+                        value = Voice.pitch,
+                        onValueChange = { Voice.setPitch(it) },
+                        valueRange = 0.7f..1.3f,
+                        onValueChangeFinished = { Voice.speak("Bonjour, Monsieur.") }
                     )
                     Spacer(Modifier.height(8.dp))
                     TextButton(onClick = { Convo.clear(context) }) {
